@@ -85,20 +85,20 @@ export default function Home() {
   useEffect(() => {
     const saved = getAuthUser();
     if (!saved) {
-      setLoading(false);
+      setTimeout(() => setLoading(false), 0);
       return;
     }
-    setUser(saved);
+    setTimeout(() => setUser(saved), 0);
 
     const fetchEntries = async () => {
       const response = await fetch(`/api/entries?userId=${saved.id}`);
       if (!response.ok) {
         console.error("Failed to load entries");
-        setLoading(false);
+        setTimeout(() => setLoading(false), 0);
         return;
       }
       const data = await response.json();
-      const normalized: MoodEntry[] = data.entries.map((entry: any) => ({
+      const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; date: string; createdAt: string }) => ({
         id: entry.id,
         mood: entry.mood,
         note: entry.note ?? "",
@@ -106,7 +106,7 @@ export default function Home() {
         createdAt: entry.createdAt,
       }));
       setEntries(normalized);
-      setLoading(false);
+      setTimeout(() => setLoading(false), 0);
     };
 
     fetchEntries();

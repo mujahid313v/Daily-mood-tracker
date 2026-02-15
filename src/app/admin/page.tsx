@@ -35,25 +35,34 @@ export default function AdminDashboard() {
   useEffect(() => {
     const stored = localStorage.getItem("mood-admin-token");
     if (stored) {
-      setToken(stored);
+      setToken(prevToken => prevToken || stored);
     }
   }, []);
 
   useEffect(() => {
     if (!token) return;
-    setLoading(true);
-    fetcher("/api/admin/summary", token)
-      .then((payload) => {
+    
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const payload = await fetcher("/api/admin/summary", token);
         setData(payload);
         setError(null);
-      })
-      .catch((error) => {
-        setError(error.message);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          setError(error.message);
+        } else {
+          setError('An error occurred');
+        }
         setData(null);
         localStorage.removeItem("mood-admin-token");
         setToken("");
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
   }, [token]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
