@@ -1,0 +1,8 @@
+{
+  "generator": "everrun",
+  "generator_version": "1.0",
+  "framework": "next",
+  "template": "next_v1",
+  "contract_id": null,
+  "base_image": "node:20.9.0-slim"
+}
