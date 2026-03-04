@@ -185,6 +185,74 @@ export default function Home() {
     }).length;
   }, [entries]);
 
+  const streak = useMemo(() => {
+    if (entries.length === 0) return 0;
+    const sortedDates = [...entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let count = 0;
+    let currentDate = new Date(today);
+    for (let i = 0; i < sortedDates.length; i++) {
+      const entryDate = new Date(sortedDates[i].date);
+      entryDate.setHours(0, 0, 0, 0);
+      const diff = Math.floor((currentDate.getTime() - entryDate.getTime()) / (24 * 60 * 60 * 1000));
+      if (diff === 0 || (i === 0 && diff === 1)) {
+        count++;
+        currentDate = entryDate;
+      } else {
+        break;
+      }
+    }
+    return count;
+  }, [entries]);
+
+  const moodScore: Record<MoodId, number> = {
+    ecstatic: 5,
+    good: 4,
+    neutral: 3,
+    low: 2,
+    stressed: 1,
+  };
+
+  const averageScore = useMemo(() => {
+    if (entries.length === 0) return 0;
+    const sum = entries.reduce((acc, entry) => acc + moodScore[entry.mood], 0);
+    return sum / entries.length;
+  }, [entries]);
+
+  const averageLabel = useMemo(() => {
+    if (averageScore >= 4) return "Great!";
+    if (averageScore >= 3) return "Good";
+    if (averageScore >= 2) return "Fair";
+    return "Low";
+  }, [averageScore]);
+
+  const moodDistribution = useMemo(() => {
+    const dist: Record<MoodId, number> = { ecstatic: 0, good: 0, neutral: 0, low: 0, stressed: 0 };
+    entries.forEach((entry) => dist[entry.mood]++);
+    return MOOD_OPTIONS.map((option) => ({
+      ...option,
+      count: dist[option.id],
+      percentage: entries.length > 0 ? Math.round((dist[option.id] / entries.length) * 100) : 0,
+    }));
+  }, [entries]);
+
+  const weeklyTrend = useMemo(() => {
+    const days: { date: Date; mood: MoodId | null }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const entry = entries.find((e) => {
+        const entryDate = new Date(e.date);
+        entryDate.setHours(0, 0, 0, 0);
+        return entryDate.getTime() === d.getTime();
+      });
+      days.push({ date: d, mood: entry?.mood ?? null });
+    }
+    return days;
+  }, [entries]);
+
   const lastMood = entries[0];
 
   if (!loading && !user) {
@@ -362,6 +430,66 @@ export default function Home() {
                 <li>Review the timeline weekly to spot trends.</li>
               </ul>
             </div>
+
+            {entries.length > 0 && (
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+                <h3 className="text-base font-semibold text-white">Analytics</h3>
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400">
+                      <span>🔥</span> Streak
+                    </div>
+                    <p className="mt-2 text-3xl font-semibold text-white">{streak}</p>
+                    <p className="text-xs text-slate-400">consecutive days</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400">
+                      <span>⭐</span> Average
+                    </div>
+                    <p className="mt-2 text-3xl font-semibold text-white">{averageScore.toFixed(1)} / 5.0</p>
+                    <p className="text-xs text-emerald-300">{averageLabel}</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                  <p className="text-xs uppercase tracking-widest text-slate-400">Weekly Trend</p>
+                  <div className="mt-3 flex items-end justify-between gap-1">
+                    {weeklyTrend.map((day, idx) => (
+                      <div key={idx} className="flex flex-1 flex-col items-center gap-1">
+                        <div
+                          className={`w-full rounded-t-lg ${
+                            day.mood ? findMood(day.mood).bg : "bg-slate-700"
+                          }`}
+                          style={{ height: day.mood ? "32px" : "8px" }}
+                        />
+                        <span className="text-[10px] text-slate-400">
+                          {day.date.toLocaleDateString(undefined, { weekday: "short" }).charAt(0)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                  <p className="text-xs uppercase tracking-widest text-slate-400">Mood Distribution</p>
+                  <div className="mt-3 space-y-2">
+                    {moodDistribution.map((m) => (
+                      <div key={m.id} className="flex items-center gap-2">
+                        <span className="text-base">{m.emoji}</span>
+                        <span className="w-16 text-sm text-slate-300">{m.label}</span>
+                        <div className="flex-1 overflow-hidden rounded-full bg-slate-700">
+                          <div
+                            className={`h-2 rounded-full ${m.bg}`}
+                            style={{ width: `${m.percentage}%` }}
+                          />
+                        </div>
+                        <span className="w-10 text-right text-xs text-slate-400">{m.percentage}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         </div>
 
