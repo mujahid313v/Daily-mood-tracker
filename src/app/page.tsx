@@ -73,6 +73,28 @@ const formatDate = (date: string) =>
 
 const findMood = (id: MoodId) => MOOD_OPTIONS.find((option) => option.id === id)!;
 
+const exportToCSV = (entries: MoodEntry[]) => {
+  if (entries.length === 0) return;
+
+  const headers = ["Date", "Mood", "Note", "Created At"];
+  const rows = entries.map((entry) => [
+    entry.date,
+    findMood(entry.mood).label,
+    entry.note ? `"${entry.note.replace(/"/g, '""')}"` : "",
+    entry.createdAt,
+  ]);
+
+  const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const today = new Date().toISOString().slice(0, 10);
+  link.href = url;
+  link.download = `mood-entries-${today}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
 export default function Home() {
   const [entries, setEntries] = useState<MoodEntry[]>([]);
   const [mood, setMood] = useState<MoodId>("good");
@@ -349,7 +371,17 @@ export default function Home() {
               <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Timeline</p>
               <h2 className="text-2xl font-semibold text-white">Daily reflections</h2>
             </div>
-            <p className="text-sm text-slate-400">Tap an entry to revisit your note.</p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-slate-400">Tap an entry to revisit your note.</p>
+              {entries.length > 0 && (
+                <button
+                  onClick={() => exportToCSV(entries)}
+                  className="rounded-full border border-white/20 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/40 hover:bg-white/5"
+                >
+                  Export CSV
+                </button>
+              )}
+            </div>
           </div>
 
           {entries.length === 0 ? (
