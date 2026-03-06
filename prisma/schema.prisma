@@ -21,6 +21,7 @@ model MoodEntry {
   id        String   @id @default(cuid())
   mood      String
   note      String?
+  tags      String?
   date      DateTime
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
