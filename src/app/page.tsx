@@ -95,6 +95,62 @@ const exportToCSV = (entries: MoodEntry[]) => {
   URL.revokeObjectURL(url);
 };
 
+type DateFilter = "all" | "7days" | "30days" | "thisMonth" | "lastMonth" | "custom";
+
+const FILTER_STORAGE_KEY = "mood-date-filter";
+
+const getDateRangeForFilter = (filter: DateFilter, customStart?: string, customEnd?: string) => {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  switch (filter) {
+    case "7days": {
+      const start = new Date(today);
+      start.setDate(start.getDate() - 6);
+      return { start: start.toISOString().slice(0, 10), end: todayISO() };
+    }
+    case "30days": {
+      const start = new Date(today);
+      start.setDate(start.getDate() - 29);
+      return { start: start.toISOString().slice(0, 10), end: todayISO() };
+    }
+    case "thisMonth": {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      return { start: start.toISOString().slice(0, 10), end: todayISO() };
+    }
+    case "lastMonth": {
+      const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const end = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+    }
+    case "custom":
+      return { start: customStart || "", end: customEnd || "" };
+    default:
+      return { start: "", end: "" };
+  }
+};
+
+const loadFilterFromStorage = (): { filter: DateFilter; customStart: string; customEnd: string } => {
+  if (typeof window === "undefined") return { filter: "all", customStart: "", customEnd: "" };
+  try {
+    const saved = localStorage.getItem(FILTER_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        filter: parsed.filter || "all",
+        customStart: parsed.customStart || "",
+        customEnd: parsed.customEnd || ""
+      };
+    }
+  } catch {}
+  return { filter: "all", customStart: "", customEnd: "" };
+};
+
+const saveFilterToStorage = (filter: DateFilter, customStart: string, customEnd: string) => {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ filter, customStart, customEnd }));
+};
+
 export default function Home() {
   const [entries, setEntries] = useState<MoodEntry[]>([]);
   const [mood, setMood] = useState<MoodId>("good");
@@ -103,6 +159,12 @@ export default function Home() {
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  const storedFilter = typeof window !== "undefined" ? loadFilterFromStorage() : { filter: "all" as DateFilter, customStart: "", customEnd: "" };
+  const [dateFilter, setDateFilter] = useState<DateFilter>(storedFilter.filter);
+  const [customDateStart, setCustomDateStart] = useState(storedFilter.customStart);
+  const [customDateEnd, setCustomDateEnd] = useState(storedFilter.customEnd);
+  const [showCustomPicker, setShowCustomPicker] = useState(storedFilter.filter === "custom");
 
   useEffect(() => {
     const saved = getAuthUser();
@@ -133,6 +195,31 @@ export default function Home() {
 
     fetchEntries();
   }, []);
+
+  useEffect(() => {
+    saveFilterToStorage(dateFilter, customDateStart, customDateEnd);
+  }, [dateFilter, customDateStart, customDateEnd]);
+
+  const handleFilterChange = (filter: DateFilter) => {
+    setDateFilter(filter);
+    if (filter === "custom") {
+      setShowCustomPicker(true);
+    } else {
+      setShowCustomPicker(false);
+    }
+  };
+
+  const filteredEntries = useMemo(() => {
+    if (dateFilter === "all") return entries;
+    const { start, end } = getDateRangeForFilter(dateFilter, customDateStart, customDateEnd);
+    if (!start || !end) return entries;
+    return entries.filter((entry) => entry.date >= start && entry.date <= end);
+  }, [entries, dateFilter, customDateStart, customDateEnd]);
+
+  const filterCountText = useMemo(() => {
+    if (dateFilter === "all") return "";
+    return `Showing ${filteredEntries.length} of ${entries.length} entries`;
+  }, [dateFilter, filteredEntries.length, entries.length]);
 
   const submitEntry = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -226,16 +313,6 @@ export default function Home() {
     if (averageScore >= 2) return "Fair";
     return "Low";
   }, [averageScore]);
-
-  const moodDistribution = useMemo(() => {
-    const dist: Record<MoodId, number> = { ecstatic: 0, good: 0, neutral: 0, low: 0, stressed: 0 };
-    entries.forEach((entry) => dist[entry.mood]++);
-    return MOOD_OPTIONS.map((option) => ({
-      ...option,
-      count: dist[option.id],
-      percentage: entries.length > 0 ? Math.round((dist[option.id] / entries.length) * 100) : 0,
-    }));
-  }, [entries]);
 
   const weeklyTrend = useMemo(() => {
     const days: { date: Date; mood: MoodId | null }[] = [];
@@ -446,7 +523,7 @@ export default function Home() {
                     <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400">
                       <span>⭐</span> Average
                     </div>
-                    <p className="mt-2 text-3xl font-semibold text-white">{averageScore.toFixed(1)} / 5.0</p>
+                    <p className="mt-2 text-3xl font-semibold text-white">{dateFilter === "all" ? averageScore.toFixed(1) : filteredEntries.length > 0 ? (filteredEntries.reduce((acc, entry) => acc + moodScore[entry.mood], 0) / filteredEntries.length).toFixed(1) : "0.0"} / 5.0</p>
                     <p className="text-xs text-emerald-300">{averageLabel}</p>
                   </div>
                 </div>
@@ -473,7 +550,16 @@ export default function Home() {
                 <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
                   <p className="text-xs uppercase tracking-widest text-slate-400">Mood Distribution</p>
                   <div className="mt-3 space-y-2">
-                    {moodDistribution.map((m) => (
+                    {(() => {
+                      const dist: Record<MoodId, number> = { ecstatic: 0, good: 0, neutral: 0, low: 0, stressed: 0 };
+                      const targetEntries = dateFilter === "all" ? entries : filteredEntries;
+                      targetEntries.forEach((entry) => dist[entry.mood]++);
+                      return MOOD_OPTIONS.map((option) => ({
+                        ...option,
+                        count: dist[option.id],
+                        percentage: targetEntries.length > 0 ? Math.round((dist[option.id] / targetEntries.length) * 100) : 0,
+                      }));
+                    })().map((m) => (
                       <div key={m.id} className="flex items-center gap-2">
                         <span className="text-base">{m.emoji}</span>
                         <span className="w-16 text-sm text-slate-300">{m.label}</span>
@@ -503,7 +589,7 @@ export default function Home() {
               <p className="text-sm text-slate-400">Tap an entry to revisit your note.</p>
               {entries.length > 0 && (
                 <button
-                  onClick={() => exportToCSV(entries)}
+                  onClick={() => exportToCSV(dateFilter === "all" ? entries : filteredEntries)}
                   className="rounded-full border border-white/20 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/40 hover:bg-white/5"
                 >
                   Export CSV
@@ -512,13 +598,83 @@ export default function Home() {
             </div>
           </div>
 
+          {entries.length > 0 && (
+            <div className="mt-6 flex flex-col gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Filter:</span>
+                {[
+                  { id: "all" as DateFilter, label: "All time" },
+                  { id: "7days" as DateFilter, label: "Last 7 days" },
+                  { id: "30days" as DateFilter, label: "Last 30 days" },
+                  { id: "thisMonth" as DateFilter, label: "This month" },
+                  { id: "lastMonth" as DateFilter, label: "Last month" },
+                  { id: "custom" as DateFilter, label: "Custom" },
+                ].map((option) => (
+                  <button
+                    key={option.id}
+                    onClick={() => handleFilterChange(option.id)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                      dateFilter === option.id
+                        ? "bg-white text-slate-900"
+                        : "border border-white/20 text-slate-300 hover:border-white/40"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              
+              {showCustomPicker && (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-slate-900/50 p-3">
+                  <label className="flex items-center gap-2 text-sm text-slate-300">
+                    From:
+                    <input
+                      type="date"
+                      value={customDateStart}
+                      onChange={(e) => setCustomDateStart(e.target.value)}
+                      className="rounded-lg border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-white/40"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-300">
+                    To:
+                    <input
+                      type="date"
+                      value={customDateEnd}
+                      onChange={(e) => setCustomDateEnd(e.target.value)}
+                      className="rounded-lg border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-white/40"
+                    />
+                  </label>
+                  {customDateStart && customDateEnd && (
+                    <button
+                      onClick={() => {
+                        setShowCustomPicker(false);
+                        setDateFilter("all");
+                      }}
+                      className="text-xs text-slate-400 hover:text-white"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {filterCountText && (
+                <p className="text-xs text-slate-400">{filterCountText}</p>
+              )}
+            </div>
+          )}
+
           {entries.length === 0 ? (
             <p className="mt-6 text-sm text-slate-300">
               Your timeline is empty. Once you add moods, they will appear here in reverse chronological order.
             </p>
+          ) : filteredEntries.length === 0 ? (
+            <p className="mt-6 text-sm text-slate-300">
+              No entries found for the selected date range. Try a different filter or add a new entry.
+            </p>
           ) : (
             <ol className="mt-8 space-y-6 border-l border-white/10 pl-6">
-              {entries.map((entry) => {
+              {filteredEntries.map((entry) => {
                 const moodDetails = findMood(entry.mood);
                 return (
                   <li key={entry.id} className="relative transition hover:translate-x-1">
