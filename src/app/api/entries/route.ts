@@ -14,13 +14,18 @@ export async function GET(request: Request) {
     orderBy: { date: "desc" },
   });
 
-  return NextResponse.json({ entries });
+  const normalized = entries.map((entry) => ({
+    ...entry,
+    tags: entry.tags ? JSON.parse(entry.tags) : [],
+  }));
+
+  return NextResponse.json({ entries: normalized });
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userId, mood, note, date } = body;
+    const { userId, mood, note, tags, date } = body;
 
     if (!userId || !mood || !date) {
       return NextResponse.json({ error: "userId, mood and date are required" }, { status: 400 });
@@ -31,11 +36,12 @@ export async function POST(request: Request) {
         userId,
         mood,
         note,
+        tags: tags && tags.length > 0 ? JSON.stringify(tags) : null,
         date: new Date(date),
       },
     });
 
-    return NextResponse.json({ entry }, { status: 201 });
+    return NextResponse.json({ entry: { ...entry, tags: tags || [] } }, { status: 201 });
   } catch (error) {
     console.error("Failed to create entry", error);
     return NextResponse.json(

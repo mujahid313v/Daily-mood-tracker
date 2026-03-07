@@ -58,8 +58,66 @@ type MoodEntry = {
   id: string;
   mood: MoodId;
   note: string;
+  tags: string[];
   date: string; // ISO
   createdAt: string;
+};
+
+const PREDEFINED_TAGS = [
+  { id: "work", label: "Work", emoji: "💼" },
+  { id: "family", label: "Family", emoji: "👨‍👩‍👧" },
+  { id: "health", label: "Health", emoji: "💪" },
+  { id: "exercise", label: "Exercise", emoji: "🏃" },
+  { id: "sleep", label: "Sleep", emoji: "😴" },
+  { id: "social", label: "Social", emoji: "👥" },
+  { id: "weather", label: "Weather", emoji: "🌤️" },
+  { id: "finances", label: "Finances", emoji: "💰" },
+] as const;
+
+const CUSTOM_TAGS_KEY = "mood-custom-tags";
+
+const loadCustomTags = (): string[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const saved = localStorage.getItem(CUSTOM_TAGS_KEY);
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveCustomTags = (tags: string[]) => {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(CUSTOM_TAGS_KEY, JSON.stringify(tags));
+};
+
+type ReminderSettings = {
+  enabled: boolean;
+  time: string;
+  days: string[];
+  sound: boolean;
+  snoozedToday: number;
+};
+
+const REMINDER_KEY = "mood-reminder-settings";
+
+const loadReminderSettings = (): ReminderSettings => {
+  if (typeof window === "undefined") return { enabled: false, time: "20:00", days: ["mon", "tue", "wed", "thu", "fri"], sound: true, snoozedToday: 0 };
+  try {
+    const saved = localStorage.getItem(REMINDER_KEY);
+    return saved ? JSON.parse(saved) : { enabled: false, time: "20:00", days: ["mon", "tue", "wed", "thu", "fri"], sound: true, snoozedToday: 0 };
+  } catch {
+    return { enabled: false, time: "20:00", days: ["mon", "tue", "wed", "thu", "fri"], sound: true, snoozedToday: 0 };
+  }
+};
+
+const saveReminderSettings = (settings: ReminderSettings) => {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(REMINDER_KEY, JSON.stringify(settings));
+};
+
+const getDayName = (date: Date): string => {
+  return ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][date.getDay()];
 };
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -165,6 +223,19 @@ export default function Home() {
   const [customDateStart, setCustomDateStart] = useState(storedFilter.customStart);
   const [customDateEnd, setCustomDateEnd] = useState(storedFilter.customEnd);
   const [showCustomPicker, setShowCustomPicker] = useState(storedFilter.filter === "custom");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [newCustomTag, setNewCustomTag] = useState("");
+  const [tagFilter, setTagFilter] = useState<string>("all");
+  
+  const storedCustomTags = typeof window !== "undefined" ? loadCustomTags() : [];
+  const [customTags, setCustomTags] = useState<string[]>(storedCustomTags);
+
+  const storedReminder = typeof window !== "undefined" ? loadReminderSettings() : { enabled: false, time: "20:00", days: [], sound: true, snoozedToday: 0 };
+  const [reminderEnabled, setReminderEnabled] = useState(storedReminder.enabled);
+  const [reminderTime, setReminderTime] = useState(storedReminder.time);
+  const [reminderDays, setReminderDays] = useState<string[]>(storedReminder.days);
+  const [reminderSound, setReminderSound] = useState(storedReminder.sound);
+  const [showReminderSettings, setShowReminderSettings] = useState(false);
 
   useEffect(() => {
     const saved = getAuthUser();
@@ -182,10 +253,11 @@ export default function Home() {
         return;
       }
       const data = await response.json();
-      const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; date: string; createdAt: string }) => ({
+      const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string }) => ({
         id: entry.id,
         mood: entry.mood,
         note: entry.note ?? "",
+        tags: entry.tags ?? [],
         date: entry.date.slice(0, 10),
         createdAt: entry.createdAt,
       }));
@@ -195,6 +267,88 @@ export default function Home() {
 
     fetchEntries();
   }, []);
+
+  const addCustomTag = () => {
+    const tag = newCustomTag.trim();
+    if (tag && !customTags.includes(tag) && customTags.length < 10) {
+      const updated = [...customTags, tag];
+      setCustomTags(updated);
+      saveCustomTags(updated);
+      setNewCustomTag("");
+    }
+  };
+
+  const toggleTag = (tagId: string) => {
+    if (selectedTags.includes(tagId)) {
+      setSelectedTags(selectedTags.filter((t) => t !== tagId));
+    } else if (selectedTags.length < 3) {
+      setSelectedTags([...selectedTags, tagId]);
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return false;
+    if (Notification.permission === "granted") return true;
+    const permission = await Notification.requestPermission();
+    return permission === "granted";
+  };
+
+  const showReminderNotification = () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "granted") {
+      const notification = new Notification("Time to log your mood! 🌟", {
+        body: "Take a moment to reflect on how you're feeling today.",
+        icon: "/favicon.ico",
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+    }
+  };
+
+  useEffect(() => {
+    if (!reminderEnabled) return;
+    
+    const checkReminder = setInterval(() => {
+      const now = new Date();
+      const currentDay = getDayName(now);
+      const currentTime = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+      
+      if (reminderDays.includes(currentDay) && currentTime === reminderTime) {
+        showReminderNotification();
+      }
+    }, 60000);
+
+    return () => clearInterval(checkReminder);
+  }, [reminderEnabled, reminderTime, reminderDays]);
+
+  useEffect(() => {
+    saveReminderSettings({
+      enabled: reminderEnabled,
+      time: reminderTime,
+      days: reminderDays,
+      sound: reminderSound,
+      snoozedToday: 0,
+    });
+  }, [reminderEnabled, reminderTime, reminderDays, reminderSound]);
+
+  const toggleReminderDay = (day: string) => {
+    if (reminderDays.includes(day)) {
+      setReminderDays(reminderDays.filter((d) => d !== day));
+    } else {
+      setReminderDays([...reminderDays, day]);
+    }
+  };
+
+  const enableReminder = async () => {
+    const granted = await requestNotificationPermission();
+    if (granted) {
+      setReminderEnabled(true);
+    } else {
+      alert("Please enable notifications in your browser settings");
+    }
+  };
 
   useEffect(() => {
     saveFilterToStorage(dateFilter, customDateStart, customDateEnd);
@@ -210,16 +364,28 @@ export default function Home() {
   };
 
   const filteredEntries = useMemo(() => {
-    if (dateFilter === "all") return entries;
-    const { start, end } = getDateRangeForFilter(dateFilter, customDateStart, customDateEnd);
-    if (!start || !end) return entries;
-    return entries.filter((entry) => entry.date >= start && entry.date <= end);
-  }, [entries, dateFilter, customDateStart, customDateEnd]);
+    let result = entries;
+    
+    if (dateFilter !== "all") {
+      const { start, end } = getDateRangeForFilter(dateFilter, customDateStart, customDateEnd);
+      if (start && end) {
+        result = result.filter((entry) => entry.date >= start && entry.date <= end);
+      }
+    }
+    
+    if (tagFilter !== "all") {
+      result = result.filter((entry) => entry.tags && entry.tags.includes(tagFilter));
+    }
+    
+    return result;
+  }, [entries, dateFilter, customDateStart, customDateEnd, tagFilter]);
 
   const filterCountText = useMemo(() => {
-    if (dateFilter === "all") return "";
+    const dateFiltered = dateFilter !== "all";
+    const tagFiltered = tagFilter !== "all";
+    if (!dateFiltered && !tagFiltered) return "";
     return `Showing ${filteredEntries.length} of ${entries.length} entries`;
-  }, [dateFilter, filteredEntries.length, entries.length]);
+  }, [dateFilter, tagFilter, filteredEntries.length, entries.length]);
 
   const submitEntry = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -237,7 +403,7 @@ export default function Home() {
     const response = await fetch("/api/entries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id, mood, note: note.trim(), date }),
+      body: JSON.stringify({ userId: user.id, mood, note: note.trim(), tags: selectedTags, date }),
     });
 
     const data = await response.json();
@@ -251,6 +417,7 @@ export default function Home() {
       id: data.entry.id,
       mood: data.entry.mood,
       note: data.entry.note ?? "",
+      tags: data.entry.tags ?? [],
       date: data.entry.date.slice(0, 10),
       createdAt: data.entry.createdAt,
     };
@@ -259,7 +426,8 @@ export default function Home() {
     setNote("");
     setDate(todayISO());
     setMood("good");
-    setFeedback({ type: "success", text: "Mood saved to PostgreSQL!" });
+    setSelectedTags([]);
+    setFeedback({ type: "success", text: "Mood saved!" });
     setTimeout(() => setFeedback(null), 3000);
   };
 
@@ -374,9 +542,114 @@ export default function Home() {
               <p className="mt-1 text-4xl font-semibold text-white">{entriesThisWeek}</p>
               <p className="text-xs text-slate-400">entries logged</p>
               {user && <p className="mt-4 text-xs text-emerald-300">Signed in as {user.email}</p>}
+              <button
+                type="button"
+                onClick={() => setShowReminderSettings(!showReminderSettings)}
+                className={`mt-3 flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition ${
+                  reminderEnabled
+                    ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-300"
+                    : "border-white/20 text-slate-400 hover:border-white/40"
+                }`}
+              >
+                <span>🔔</span>
+                <span>{reminderEnabled ? "Reminder On" : "Set Reminder"}</span>
+              </button>
             </div>
           </div>
         </header>
+
+        {showReminderSettings && (
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Daily Reminder</h3>
+              <button
+                type="button"
+                onClick={() => setShowReminderSettings(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="mt-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-300">Enable daily reminder</span>
+                <button
+                  type="button"
+                  onClick={reminderEnabled ? () => setReminderEnabled(false) : enableReminder}
+                  className={`relative h-6 w-11 rounded-full transition ${
+                    reminderEnabled ? "bg-emerald-500" : "bg-slate-600"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${
+                      reminderEnabled ? "left-6" : "left-1"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {reminderEnabled && (
+                <>
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm text-slate-300">Time:</span>
+                    <input
+                      type="time"
+                      value={reminderTime}
+                      onChange={(e) => setReminderTime(e.target.value)}
+                      className="rounded-lg border border-white/10 bg-slate-800 px-3 py-1.5 text-sm text-white outline-none focus:border-white/40"
+                    />
+                  </div>
+
+                  <div>
+                    <span className="text-sm text-slate-300">Days:</span>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        { id: "mon", label: "M" },
+                        { id: "tue", label: "T" },
+                        { id: "wed", label: "W" },
+                        { id: "thu", label: "T" },
+                        { id: "fri", label: "F" },
+                        { id: "sat", label: "S" },
+                        { id: "sun", label: "S" },
+                      ].map((day) => (
+                        <button
+                          key={day.id}
+                          type="button"
+                          onClick={() => toggleReminderDay(day.id)}
+                          className={`h-8 w-8 rounded-full text-xs font-medium transition ${
+                            reminderDays.includes(day.id)
+                              ? "bg-white text-slate-900"
+                              : "border border-white/20 text-slate-400 hover:border-white/40"
+                          }`}
+                        >
+                          {day.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-300">Sound</span>
+                    <button
+                      type="button"
+                      onClick={() => setReminderSound(!reminderSound)}
+                      className={`relative h-6 w-11 rounded-full transition ${
+                        reminderSound ? "bg-emerald-500" : "bg-slate-600"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${
+                          reminderSound ? "left-6" : "left-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
           <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
@@ -451,6 +724,69 @@ export default function Home() {
                     className="mt-2 rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-base text-white placeholder:text-slate-500 outline-none transition focus:border-white/40"
                   />
                 </label>
+              </div>
+
+              <div className="space-y-3">
+                <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Tags (max 3)</span>
+                <div className="flex flex-wrap gap-2">
+                  {PREDEFINED_TAGS.map((tag) => {
+                    const isSelected = selectedTags.includes(tag.id);
+                    return (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onClick={() => toggleTag(tag.id)}
+                        className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                          isSelected
+                            ? "bg-white text-slate-900"
+                            : "border border-white/20 text-slate-300 hover:border-white/40"
+                        }`}
+                      >
+                        <span>{tag.emoji}</span>
+                        <span>{tag.label}</span>
+                      </button>
+                    );
+                  })}
+                  {customTags.map((tag) => {
+                    const isSelected = selectedTags.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleTag(tag)}
+                        className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                          isSelected
+                            ? "bg-white text-slate-900"
+                            : "border border-white/20 text-slate-300 hover:border-white/40"
+                        }`}
+                      >
+                        <span>#</span>
+                        <span>{tag}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {customTags.length < 10 && (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newCustomTag}
+                      onChange={(e) => setNewCustomTag(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCustomTag())}
+                      placeholder="Add custom tag..."
+                      maxLength={20}
+                      className="flex-1 rounded-xl border border-white/10 bg-slate-900/60 px-3 py-1.5 text-xs text-white placeholder:text-slate-500 outline-none transition focus:border-white/40"
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomTag}
+                      disabled={!newCustomTag.trim()}
+                      className="rounded-xl border border-white/20 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/40 disabled:opacity-50"
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
               </div>
 
               <button
@@ -661,6 +997,27 @@ export default function Home() {
               {filterCountText && (
                 <p className="text-xs text-slate-400">{filterCountText}</p>
               )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Tag:</span>
+                <select
+                  value={tagFilter}
+                  onChange={(e) => setTagFilter(e.target.value)}
+                  className="rounded-full border border-white/20 bg-slate-900/60 px-3 py-1 text-xs text-slate-300 outline-none transition focus:border-white/40"
+                >
+                  <option value="all">All tags</option>
+                  {PREDEFINED_TAGS.map((tag) => (
+                    <option key={tag.id} value={tag.id}>
+                      {tag.emoji} {tag.label}
+                    </option>
+                  ))}
+                  {customTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      # {tag}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
 
@@ -692,6 +1049,19 @@ export default function Home() {
                         <p className="mt-3 text-base text-slate-100">{entry.note}</p>
                       ) : (
                         <p className="mt-3 text-sm text-slate-400">No note saved for this day.</p>
+                      )}
+                      {entry.tags && entry.tags.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {entry.tags.map((tag) => {
+                            const predefined = PREDEFINED_TAGS.find((t) => t.id === tag);
+                            return (
+                              <span key={tag} className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300">
+                                <span>{predefined?.emoji || "#"}</span>
+                                <span>{predefined?.label || tag}</span>
+                              </span>
+                            );
+                          })}
+                        </div>
                       )}
                       <p className="mt-2 text-xs text-slate-500">Logged at {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
                     </div>
