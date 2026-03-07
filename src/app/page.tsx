@@ -63,6 +63,36 @@ type MoodEntry = {
   createdAt: string;
 };
 
+type ChartTab = "overview" | "weekly" | "monthly" | "calendar";
+
+const MOOD_COLORS: Record<MoodId, string> = {
+  ecstatic: "#a3e635",
+  good: "#34d399",
+  neutral: "#94a3b8",
+  low: "#fb923c",
+  stressed: "#fb7185",
+};
+
+const getMoodColor = (mood: MoodId) => MOOD_COLORS[mood];
+
+const getWeekNumber = (date: Date): number => {
+  const start = new Date(date.getFullYear(), 0, 1);
+  const diff = date.getTime() - start.getTime();
+  const oneWeek = 604800000;
+  return Math.ceil((diff + start.getDay() * 86400000) / oneWeek);
+};
+
+const getWeeksInRange = (weeks: number): { week: number; year: number }[] => {
+  const result: { week: number; year: number }[] = [];
+  const now = new Date();
+  for (let i = weeks - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i * 7);
+    result.push({ week: getWeekNumber(d), year: d.getFullYear() });
+  }
+  return result;
+};
+
 const PREDEFINED_TAGS = [
   { id: "work", label: "Work", emoji: "💼" },
   { id: "family", label: "Family", emoji: "👨‍👩‍👧" },
@@ -226,6 +256,7 @@ export default function Home() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [newCustomTag, setNewCustomTag] = useState("");
   const [tagFilter, setTagFilter] = useState<string>("all");
+  const [chartTab, setChartTab] = useState<ChartTab>("overview");
   
   const storedCustomTags = typeof window !== "undefined" ? loadCustomTags() : [];
   const [customTags, setCustomTags] = useState<string[]>(storedCustomTags);
@@ -497,6 +528,77 @@ export default function Home() {
     }
     return days;
   }, [entries]);
+
+  const lineChartData = useMemo(() => {
+    const days: { date: Date; score: number | null }[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const entry = entries.find((e) => {
+        const entryDate = new Date(e.date);
+        entryDate.setHours(0, 0, 0, 0);
+        return entryDate.getTime() === d.getTime();
+      });
+      days.push({ date: d, score: entry ? moodScore[entry.mood] : null });
+    }
+    return days;
+  }, [entries]);
+
+  const barChartData = useMemo(() => {
+    const weeks = getWeeksInRange(8);
+    return weeks.map(({ week, year }) => {
+      const weekEntries = entries.filter((e) => {
+        const entryDate = new Date(e.date);
+        return getWeekNumber(entryDate) === week && entryDate.getFullYear() === year;
+      });
+      const avg = weekEntries.length > 0
+        ? weekEntries.reduce((sum, e) => sum + moodScore[e.mood], 0) / weekEntries.length
+        : null;
+      return { week, year, avg, count: weekEntries.length };
+    });
+  }, [entries]);
+
+  const donutChartData = useMemo(() => {
+    const dist: Record<MoodId, number> = { ecstatic: 0, good: 0, neutral: 0, low: 0, stressed: 0 };
+    entries.forEach((e) => dist[e.mood]++);
+    return MOOD_OPTIONS.map((m) => ({
+      mood: m.id,
+      label: m.label,
+      emoji: m.emoji,
+      color: MOOD_COLORS[m.id],
+      value: dist[m.id],
+      percentage: entries.length > 0 ? Math.round((dist[m.id] / entries.length) * 100) : 0,
+    }));
+  }, [entries]);
+
+  const heatmapData = useMemo(() => {
+    const days: { date: Date; score: number | null }[] = [];
+    for (let i = 89; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const entry = entries.find((e) => {
+        const entryDate = new Date(e.date);
+        entryDate.setHours(0, 0, 0, 0);
+        return entryDate.getTime() === d.getTime();
+      });
+      days.push({ date: d, score: entry ? moodScore[entry.mood] : null });
+    }
+    return days;
+  }, [entries]);
+
+  const trendDirection = useMemo(() => {
+    if (lineChartData.filter((d) => d.score !== null).length < 7) return "stable";
+    const recent = lineChartData.slice(-7).filter((d) => d.score !== null);
+    const previous = lineChartData.slice(-14, -7).filter((d) => d.score !== null);
+    if (recent.length === 0 || previous.length === 0) return "stable";
+    const recentAvg = recent.reduce((a, b) => a + b.score!, 0) / recent.length;
+    const prevAvg = previous.reduce((a, b) => a + b.score!, 0) / previous.length;
+    if (recentAvg - prevAvg > 0.3) return "up";
+    if (prevAvg - recentAvg > 0.3) return "down";
+    return "stable";
+  }, [lineChartData]);
 
   const lastMood = entries[0];
 
@@ -862,7 +964,151 @@ export default function Home() {
                     <p className="mt-2 text-3xl font-semibold text-white">{dateFilter === "all" ? averageScore.toFixed(1) : filteredEntries.length > 0 ? (filteredEntries.reduce((acc, entry) => acc + moodScore[entry.mood], 0) / filteredEntries.length).toFixed(1) : "0.0"} / 5.0</p>
                     <p className="text-xs text-emerald-300">{averageLabel}</p>
                   </div>
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400">
+                      <span>📈</span> Trend
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-2xl">
+                        {trendDirection === "up" ? "↑" : trendDirection === "down" ? "↓" : "→"}
+                      </span>
+                      <span className={`text-lg font-semibold ${
+                        trendDirection === "up" ? "text-emerald-400" : trendDirection === "down" ? "text-rose-400" : "text-slate-400"
+                      }`}>
+                        {trendDirection === "up" ? "Trending Up" : trendDirection === "down" ? "Trending Down" : "Stable"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">vs last week</p>
+                  </div>
                 </div>
+
+                <div className="mt-4 flex gap-2">
+                  {[
+                    { id: "overview" as ChartTab, label: "Overview" },
+                    { id: "weekly" as ChartTab, label: "Weekly" },
+                    { id: "monthly" as ChartTab, label: "Monthly" },
+                    { id: "calendar" as ChartTab, label: "Calendar" },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setChartTab(tab.id)}
+                      className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${
+                        chartTab === tab.id
+                          ? "bg-white text-slate-900"
+                          : "border border-white/20 text-slate-400 hover:border-white/40"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {chartTab === "overview" && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Mood Over Time (30 Days)</p>
+                    <div className="mt-3 h-32 flex items-end justify-between gap-1">
+                      {lineChartData.map((day, idx) => (
+                        <div key={idx} className="flex flex-1 flex-col items-center gap-1">
+                          <div
+                            className="w-full rounded-t-sm transition-all"
+                            style={{
+                              height: day.score ? `${day.score * 6.4}px` : "4px",
+                              backgroundColor: day.score ? getMoodColor(Object.keys(moodScore).find((k) => moodScore[k as MoodId] === day.score) as MoodId) : "#334155",
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex justify-between text-[10px] text-slate-500">
+                      <span>30 days ago</span>
+                      <span>Today</span>
+                    </div>
+                  </div>
+                )}
+
+                {chartTab === "weekly" && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Weekly Averages (8 Weeks)</p>
+                    <div className="mt-3 h-32 flex items-end justify-between gap-2">
+                      {barChartData.map((week, idx) => (
+                        <div key={idx} className="flex flex-1 flex-col items-center gap-1">
+                          <div
+                            className="w-full rounded-t-sm bg-emerald-500"
+                            style={{ height: week.avg ? `${week.avg * 25.6}px` : "4px", opacity: week.avg ? 1 : 0.3 }}
+                          />
+                          <span className="text-[10px] text-slate-500">W{week.week}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {chartTab === "monthly" && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Mood Distribution</p>
+                    <div className="mt-4 flex items-center justify-center">
+                      <div className="relative h-32 w-32">
+                        <svg viewBox="0 0 36 36" className="h-32 w-32 rotate-[-90deg]">
+                          {donutChartData.reduce((acc, slice, idx) => {
+                            if (slice.value === 0) return acc;
+                            const offset = acc.offset;
+                            const dashArray = (slice.percentage * 0.7854) + " " + (100 - slice.percentage * 0.7854);
+                            acc.elements.push(
+                              <circle
+                                key={slice.mood}
+                                cx="18"
+                                cy="18"
+                                r="15.9155"
+                                fill="transparent"
+                                stroke={slice.color}
+                                strokeWidth="4"
+                                strokeDasharray={dashArray}
+                                strokeDashoffset={25 - offset}
+                              />
+                            );
+                            acc.offset += slice.percentage * 0.7854;
+                            return acc;
+                          }, { elements: [] as React.ReactNode[], offset: 0 }).elements}
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                      {donutChartData.filter((s) => s.value > 0).map((slice) => (
+                        <div key={slice.mood} className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full" style={{ backgroundColor: slice.color }} />
+                          <span className="text-xs text-slate-300">{slice.emoji} {slice.label}</span>
+                          <span className="ml-auto text-xs text-slate-400">{slice.percentage}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {chartTab === "calendar" && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Mood Calendar (90 Days)</p>
+                    <div className="mt-3 grid grid-cols-10 gap-1">
+                      {heatmapData.map((day, idx) => (
+                        <div
+                          key={idx}
+                          className="h-4 w-4 rounded-sm transition-all"
+                          style={{
+                            backgroundColor: day.score ? getMoodColor(Object.keys(moodScore).find((k) => moodScore[k as MoodId] === day.score) as MoodId) : "#1e293b",
+                            opacity: day.score ? 0.7 : 0.3,
+                          }}
+                          title={`${day.date.toLocaleDateString()}: ${day.score ? Object.entries(moodScore).find(([, v]) => v === day.score)?.[0] : "No entry"}`}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-3 flex items-center justify-center gap-4 text-[10px] text-slate-500">
+                      <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: MOOD_COLORS.ecstatic }} /> Great</span>
+                      <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: MOOD_COLORS.good }} /> Good</span>
+                      <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: MOOD_COLORS.neutral }} /> Okay</span>
+                      <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: MOOD_COLORS.low }} /> Low</span>
+                      <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: MOOD_COLORS.stressed }} /> Bad</span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
                   <p className="text-xs uppercase tracking-widest text-slate-400">Weekly Trend</p>
