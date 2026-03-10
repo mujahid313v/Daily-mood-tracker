@@ -63,7 +63,22 @@ type MoodEntry = {
   createdAt: string;
 };
 
+type Theme = "dark" | "light";
 type ChartTab = "overview" | "weekly" | "monthly" | "calendar";
+
+const THEME_KEY = "mood-theme";
+
+const getInitialTheme = (): Theme => {
+  if (typeof window === "undefined") return "dark";
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+  return "dark";
+};
+
+const saveTheme = (theme: Theme) => {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(THEME_KEY, theme);
+};
 
 const MOOD_COLORS: Record<MoodId, string> = {
   ecstatic: "#a3e635",
@@ -257,6 +272,8 @@ export default function Home() {
   const [newCustomTag, setNewCustomTag] = useState("");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [chartTab, setChartTab] = useState<ChartTab>("overview");
+  const storedTheme = typeof window !== "undefined" ? getInitialTheme() : "dark";
+  const [theme, setTheme] = useState<Theme>(storedTheme);
   
   const storedCustomTags = typeof window !== "undefined" ? loadCustomTags() : [];
   const [customTags, setCustomTags] = useState<string[]>(storedCustomTags);
@@ -298,6 +315,17 @@ export default function Home() {
 
     fetchEntries();
   }, []);
+
+  useEffect(() => {
+    if (theme === "light") {
+      document.documentElement.classList.add("light");
+      document.documentElement.classList.remove("dark");
+    } else {
+      document.documentElement.classList.add("dark");
+      document.documentElement.classList.remove("light");
+    }
+    saveTheme(theme);
+  }, [theme]);
 
   const addCustomTag = () => {
     const tag = newCustomTag.trim();
@@ -655,6 +683,14 @@ export default function Home() {
               >
                 <span>🔔</span>
                 <span>{reminderEnabled ? "Reminder On" : "Set Reminder"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                className="mt-3 flex items-center gap-2 rounded-full border border-white/20 px-3 py-1 text-xs text-slate-400 transition hover:border-white/40"
+              >
+                <span>{theme === "dark" ? "☀️" : "🌙"}</span>
+                <span>{theme === "dark" ? "Light" : "Dark"}</span>
               </button>
             </div>
           </div>
