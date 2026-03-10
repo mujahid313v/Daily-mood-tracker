@@ -284,6 +284,11 @@ export default function Home() {
   const [reminderDays, setReminderDays] = useState<string[]>(storedReminder.days);
   const [reminderSound, setReminderSound] = useState(storedReminder.sound);
   const [showReminderSettings, setShowReminderSettings] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<MoodEntry | null>(null);
+  const [editMood, setEditMood] = useState<MoodId>("good");
+  const [editNote, setEditNote] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editTags, setEditTags] = useState<string[]>([]);
 
   useEffect(() => {
     const saved = getAuthUser();
@@ -487,6 +492,42 @@ export default function Home() {
     setMood("good");
     setSelectedTags([]);
     setFeedback({ type: "success", text: "Mood saved!" });
+    setTimeout(() => setFeedback(null), 3000);
+  };
+
+  const openEditModal = (entry: MoodEntry) => {
+    setEditingEntry(entry);
+    setEditMood(entry.mood);
+    setEditNote(entry.note);
+    setEditDate(entry.date);
+    setEditTags(entry.tags || []);
+  };
+
+  const saveEdit = async () => {
+    if (!editingEntry) return;
+
+    const response = await fetch("/api/entries", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: editingEntry.id, mood: editMood, note: editNote.trim(), tags: editTags, date: editDate }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      setFeedback({ type: "error", text: data.error || "Unable to update entry" });
+      setTimeout(() => setFeedback(null), 4000);
+      return;
+    }
+
+    setEntries((prev) =>
+      prev.map((e) =>
+        e.id === editingEntry.id
+          ? { ...e, mood: editMood, note: editNote, tags: editTags, date: editDate }
+          : e
+      )
+    );
+    setEditingEntry(null);
+    setFeedback({ type: "success", text: "Entry updated!" });
     setTimeout(() => setFeedback(null), 3000);
   };
 
@@ -1345,7 +1386,16 @@ export default function Home() {
                           })}
                         </div>
                       )}
-                      <p className="mt-2 text-xs text-slate-500">Logged at {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                      <div className="mt-2 flex items-center justify-between">
+                        <p className="text-xs text-slate-500">Logged at {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(entry)}
+                          className="text-xs text-slate-400 hover:text-white"
+                        >
+                          ✏️ Edit
+                        </button>
+                      </div>
                     </div>
                   </li>
                 );
@@ -1353,6 +1403,107 @@ export default function Home() {
             </ol>
           )}
         </section>
+
+        {editingEntry && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="mx-4 w-full max-w-lg rounded-3xl border border-white/10 bg-slate-900 p-6">
+              <h3 className="text-xl font-semibold text-white">Edit Entry</h3>
+              
+              <div className="mt-4 space-y-4">
+                <div className="space-y-2">
+                  <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Mood</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {MOOD_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setEditMood(option.id)}
+                        className={`flex items-center gap-2 rounded-xl border p-3 transition ${
+                          editMood === option.id
+                            ? "border-white/40 bg-white/10"
+                            : "border-white/10 hover:border-white/30"
+                        }`}
+                      >
+                        <span className="text-xl">{option.emoji}</span>
+                        <span className="text-sm text-white">{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <label className="flex flex-col text-sm text-slate-200">
+                  Date
+                  <input
+                    type="date"
+                    max={todayISO()}
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="mt-2 rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none transition focus:border-white/40"
+                  />
+                </label>
+
+                <label className="flex flex-col text-sm text-slate-200">
+                  Note
+                  <input
+                    type="text"
+                    maxLength={80}
+                    value={editNote}
+                    onChange={(e) => setEditNote(e.target.value)}
+                    placeholder="Add a note..."
+                    className="mt-2 rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white placeholder:text-slate-500 outline-none transition focus:border-white/40"
+                  />
+                </label>
+
+                <div className="space-y-2">
+                  <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Tags</span>
+                  <div className="flex flex-wrap gap-2">
+                    {PREDEFINED_TAGS.map((tag) => {
+                      const isSelected = editTags.includes(tag.id);
+                      return (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setEditTags(editTags.filter((t) => t !== tag.id));
+                            } else if (editTags.length < 3) {
+                              setEditTags([...editTags, tag.id]);
+                            }
+                          }}
+                          className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition ${
+                            isSelected
+                              ? "bg-white text-slate-900"
+                              : "border border-white/20 text-slate-300 hover:border-white/40"
+                          }`}
+                        >
+                          <span>{tag.emoji}</span>
+                          <span>{tag.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingEntry(null)}
+                  className="flex-1 rounded-2xl border border-white/20 py-3 text-sm font-medium text-slate-300 transition hover:border-white/40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveEdit}
+                  className="flex-1 rounded-2xl bg-white py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-200"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
