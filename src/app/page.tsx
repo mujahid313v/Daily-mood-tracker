@@ -263,26 +263,22 @@ export default function Home() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   
-  const storedFilter = typeof window !== "undefined" ? loadFilterFromStorage() : { filter: "all" as DateFilter, customStart: "", customEnd: "" };
-  const [dateFilter, setDateFilter] = useState<DateFilter>(storedFilter.filter);
-  const [customDateStart, setCustomDateStart] = useState(storedFilter.customStart);
-  const [customDateEnd, setCustomDateEnd] = useState(storedFilter.customEnd);
-  const [showCustomPicker, setShowCustomPicker] = useState(storedFilter.filter === "custom");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [customDateStart, setCustomDateStart] = useState("");
+  const [customDateEnd, setCustomDateEnd] = useState("");
+  const [showCustomPicker, setShowCustomPicker] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [newCustomTag, setNewCustomTag] = useState("");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [chartTab, setChartTab] = useState<ChartTab>("overview");
-  const storedTheme = typeof window !== "undefined" ? getInitialTheme() : "dark";
-  const [theme, setTheme] = useState<Theme>(storedTheme);
+  const [theme, setTheme] = useState<Theme>("dark");
   
-  const storedCustomTags = typeof window !== "undefined" ? loadCustomTags() : [];
-  const [customTags, setCustomTags] = useState<string[]>(storedCustomTags);
+  const [customTags, setCustomTags] = useState<string[]>([]);
 
-  const storedReminder = typeof window !== "undefined" ? loadReminderSettings() : { enabled: false, time: "20:00", days: [], sound: true, snoozedToday: 0 };
-  const [reminderEnabled, setReminderEnabled] = useState(storedReminder.enabled);
-  const [reminderTime, setReminderTime] = useState(storedReminder.time);
-  const [reminderDays, setReminderDays] = useState<string[]>(storedReminder.days);
-  const [reminderSound, setReminderSound] = useState(storedReminder.sound);
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [reminderTime, setReminderTime] = useState("20:00");
+  const [reminderDays, setReminderDays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
+  const [reminderSound, setReminderSound] = useState(true);
   const [showReminderSettings, setShowReminderSettings] = useState(false);
   const [editingEntry, setEditingEntry] = useState<MoodEntry | null>(null);
   const [editMood, setEditMood] = useState<MoodId>("good");
@@ -319,6 +315,24 @@ export default function Home() {
     };
 
     fetchEntries();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const filterData = loadFilterFromStorage();
+    setDateFilter(filterData.filter);
+    setCustomDateStart(filterData.customStart);
+    setCustomDateEnd(filterData.customEnd);
+    setShowCustomPicker(filterData.filter === "custom");
+    
+    setTheme(getInitialTheme());
+    setCustomTags(loadCustomTags());
+    
+    const reminderData = loadReminderSettings();
+    setReminderEnabled(reminderData.enabled);
+    setReminderTime(reminderData.time);
+    setReminderDays(reminderData.days);
+    setReminderSound(reminderData.sound);
   }, []);
 
   useEffect(() => {
