@@ -281,6 +281,7 @@ export default function Home() {
   const [reminderSound, setReminderSound] = useState(true);
   const [showReminderSettings, setShowReminderSettings] = useState(false);
   const [editingEntry, setEditingEntry] = useState<MoodEntry | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState<MoodEntry | null>(null);
   const [editMood, setEditMood] = useState<MoodId>("good");
   const [editNote, setEditNote] = useState("");
   const [editDate, setEditDate] = useState("");
@@ -542,6 +543,26 @@ export default function Home() {
     );
     setEditingEntry(null);
     setFeedback({ type: "success", text: "Entry updated!" });
+    setTimeout(() => setFeedback(null), 3000);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingEntry) return;
+
+    const response = await fetch(`/api/entries?id=${deletingEntry.id}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      setFeedback({ type: "error", text: data.error || "Unable to delete entry" });
+      setTimeout(() => setFeedback(null), 4000);
+      return;
+    }
+
+    setEntries((prev) => prev.filter((e) => e.id !== deletingEntry.id));
+    setDeletingEntry(null);
+    setFeedback({ type: "success", text: "Entry deleted!" });
     setTimeout(() => setFeedback(null), 3000);
   };
 
@@ -1402,13 +1423,22 @@ export default function Home() {
                       )}
                       <div className="mt-2 flex items-center justify-between">
                         <p className="text-xs text-slate-500">Logged at {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(entry)}
-                          className="text-xs text-slate-400 hover:text-white"
-                        >
-                          ✏️ Edit
-                        </button>
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(entry)}
+                            className="text-xs text-slate-400 hover:text-white"
+                          >
+                            ✏️ Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingEntry(entry)}
+                            className="text-xs text-rose-400 hover:text-rose-300"
+                          >
+                            🗑️ Delete
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </li>
@@ -1513,6 +1543,33 @@ export default function Home() {
                   className="flex-1 rounded-2xl bg-white py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-200"
                 >
                   Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {deletingEntry && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="mx-4 w-full max-w-sm rounded-3xl border border-white/10 bg-slate-900 p-6">
+              <h3 className="text-xl font-semibold text-white">Delete Entry</h3>
+              <p className="mt-3 text-sm text-slate-300">
+                Are you sure you want to delete this entry? This action cannot be undone.
+              </p>
+              <div className="mt-6 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDeletingEntry(null)}
+                  className="flex-1 rounded-2xl border border-white/20 py-3 text-sm font-medium text-slate-300 transition hover:border-white/40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDelete}
+                  className="flex-1 rounded-2xl bg-rose-600 py-3 text-sm font-semibold text-white transition hover:bg-rose-500"
+                >
+                  Delete
                 </button>
               </div>
             </div>
