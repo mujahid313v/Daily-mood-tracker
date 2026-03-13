@@ -287,10 +287,11 @@ export default function Home() {
   const [editDate, setEditDate] = useState("");
   const [editTags, setEditTags] = useState<string[]>([]);
   
-  const [showBackupSettings, setShowBackupSettings] = useState(false);
+const [showBackupSettings, setShowBackupSettings] = useState(false);
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<{ entries: any[] } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     const saved = getAuthUser();
@@ -447,8 +448,19 @@ export default function Home() {
     }
   };
 
-  const filteredEntries = useMemo(() => {
+const filteredEntries = useMemo(() => {
     let result = entries;
+    
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter((entry) => {
+        const noteMatch = entry.note?.toLowerCase().includes(query);
+        const tagMatch = entry.tags?.some((tag) => tag.toLowerCase().includes(query));
+        const moodMatch = entry.mood.toLowerCase().includes(query);
+        const dateMatch = entry.date.includes(query);
+        return noteMatch || tagMatch || moodMatch || dateMatch;
+      });
+    }
     
     if (dateFilter !== "all") {
       const { start, end } = getDateRangeForFilter(dateFilter, customDateStart, customDateEnd);
@@ -462,14 +474,15 @@ export default function Home() {
     }
     
     return result;
-  }, [entries, dateFilter, customDateStart, customDateEnd, tagFilter]);
+  }, [entries, searchQuery, dateFilter, customDateStart, customDateEnd, tagFilter]);
 
   const filterCountText = useMemo(() => {
     const dateFiltered = dateFilter !== "all";
     const tagFiltered = tagFilter !== "all";
-    if (!dateFiltered && !tagFiltered) return "";
+    const searchActive = searchQuery.trim().length > 0;
+    if (!dateFiltered && !tagFiltered && !searchActive) return "";
     return `Showing ${filteredEntries.length} of ${entries.length} entries`;
-  }, [dateFilter, tagFilter, filteredEntries.length, entries.length]);
+  }, [dateFilter, tagFilter, searchQuery, filteredEntries.length, entries.length]);
 
   const submitEntry = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1818,8 +1831,30 @@ export default function Home() {
             </div>
           </div>
 
-          {entries.length > 0 && (
+{entries.length > 0 && (
             <div className="mt-6 flex flex-col gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Search:</span>
+                <div className="relative flex-1 max-w-xs">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search notes, moods, tags..."
+                    className="w-full rounded-full border border-white/10 bg-slate-900/60 px-4 py-1.5 pl-9 text-xs text-white placeholder:text-slate-500 outline-none transition focus:border-white/40"
+                  />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Filter:</span>
                 {[
