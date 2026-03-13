@@ -1405,7 +1405,7 @@ export default function Home() {
               )}
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+<div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
               <h3 className="text-base font-semibold text-white">Quick tips</h3>
               <ul className="mt-4 list-disc space-y-2 pl-4 text-sm text-slate-300">
                 <li>Set a reminder at the same time every day.</li>
@@ -1413,6 +1413,88 @@ export default function Home() {
                 <li>Review the timeline weekly to spot trends.</li>
               </ul>
             </div>
+
+            {entries.length >= 7 && (
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+                <h3 className="text-base font-semibold text-white">Insights</h3>
+                
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400">
+                      <span>📊</span> This Week
+                    </div>
+                    <p className="mt-2 text-2xl font-semibold text-white">{entriesThisWeek} entries</p>
+                    <p className="text-xs text-slate-400">logged this week</p>
+                  </div>
+                  
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400">
+                      <span>🎯</span> Consistency
+                    </div>
+                    <p className="mt-2 text-2xl font-semibold text-white">{Math.round((entriesThisWeek / 7) * 100)}%</p>
+                    <p className="text-xs text-slate-400">of week completed</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                  <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400 mb-2">
+                    <span>💡</span> Pattern Insight
+                  </div>
+                  <p className="text-sm text-slate-300">
+                    {(() => {
+                      const thisMonthEntries = entries.filter(e => {
+                        const entryDate = new Date(e.date);
+                        const now = new Date();
+                        return entryDate.getMonth() === now.getMonth() && entryDate.getFullYear() === now.getFullYear();
+                      });
+                      const lastMonthEntries = entries.filter(e => {
+                        const entryDate = new Date(e.date);
+                        const now = new Date();
+                        const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                        return entryDate.getMonth() === lastMonth.getMonth() && entryDate.getFullYear() === lastMonth.getFullYear();
+                      });
+                      
+                      if (thisMonthEntries.length === 0) return "Start logging to see your monthly insights!";
+                      if (lastMonthEntries.length === 0) return "Keep logging to build your monthly comparison!";
+                      
+                      const thisMonthAvg = thisMonthEntries.reduce((a, e) => a + moodScore[e.mood], 0) / thisMonthEntries.length;
+                      const lastMonthAvg = lastMonthEntries.reduce((a, e) => a + moodScore[e.mood], 0) / lastMonthEntries.length;
+                      const diff = thisMonthAvg - lastMonthAvg;
+                      
+                      if (diff > 0.3) return `Great progress! Your mood improved by ${diff.toFixed(1)} points this month compared to last month.`;
+                      if (diff < -0.3) return `This month has been challenging. Your mood is ${Math.abs(diff).toFixed(1)} points lower than last month.`;
+                      return "Your mood has been stable compared to last month. Keep up the consistency!";
+                    })()}
+                  </p>
+                </div>
+
+                <div className="mt-4">
+                  <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400 mb-3">
+                    <span>🏆</span> Achievements
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {entries.length >= 1 && (
+                      <span className="rounded-full bg-amber-500/20 border border-amber-500/50 px-3 py-1 text-xs text-amber-300">🌱 First Entry</span>
+                    )}
+                    {streak >= 7 && (
+                      <span className="rounded-full bg-emerald-500/20 border border-emerald-500/50 px-3 py-1 text-xs text-emerald-300">🔥 7-Day Streak</span>
+                    )}
+                    {streak >= 30 && (
+                      <span className="rounded-full bg-purple-500/20 border border-purple-500/50 px-3 py-1 text-xs text-purple-300">⚡ 30-Day Streak</span>
+                    )}
+                    {entries.length >= 100 && (
+                      <span className="rounded-full bg-blue-500/20 border border-blue-500/50 px-3 py-1 text-xs text-blue-300">💯 100 Entries</span>
+                    )}
+                    {entriesThisWeek === 7 && (
+                      <span className="rounded-full bg-rose-500/20 border border-rose-500/50 px-3 py-1 text-xs text-rose-300">✨ Perfect Week</span>
+                    )}
+                    {tagCorrelationData.length >= 5 && (
+                      <span className="rounded-full bg-cyan-500/20 border border-cyan-500/50 px-3 py-1 text-xs text-cyan-300">🏷️ Tag Master</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {entries.length > 0 && (
               <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
