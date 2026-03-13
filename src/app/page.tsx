@@ -286,6 +286,11 @@ export default function Home() {
   const [editNote, setEditNote] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editTags, setEditTags] = useState<string[]>([]);
+  
+  const [showBackupSettings, setShowBackupSettings] = useState(false);
+  const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<{ entries: any[] } | null>(null);
 
   useEffect(() => {
     const saved = getAuthUser();
@@ -656,6 +661,115 @@ export default function Home() {
     setTimeout(() => setFeedback(null), 3000);
   };
 
+  const handleBackupExport = async () => {
+    if (!user) {
+      setFeedback({ type: "error", text: "Please login to export backup" });
+      setTimeout(() => setFeedback(null), 3000);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/backup?userId=${user.id}`);
+      if (!response.ok) {
+        throw new Error("Failed to create backup");
+      }
+      
+      const data = await response.json();
+      const blob = new Blob([JSON.stringify(data.backup, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const today = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `mood-backup-${today}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      
+      setFeedback({ type: "success", text: "Backup exported successfully!" });
+      setTimeout(() => setFeedback(null), 3000);
+    } catch (error) {
+      setFeedback({ type: "error", text: "Failed to export backup" });
+      setTimeout(() => setFeedback(null), 3000);
+    }
+  };
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.entries && Array.isArray(data.entries)) {
+          setImportPreview({ entries: data.entries });
+          setImportFile(file);
+        } else {
+          setFeedback({ type: "error", text: "Invalid backup file format" });
+          setTimeout(() => setFeedback(null), 3000);
+        }
+      } catch {
+        setFeedback({ type: "error", text: "Failed to parse backup file" });
+        setTimeout(() => setFeedback(null), 3000);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImportConfirm = async () => {
+    if (!user || !importPreview) {
+      setFeedback({ type: "error", text: "Please login to import backup" });
+      setTimeout(() => setFeedback(null), 3000);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/backup/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user.id,
+          entries: importPreview.entries,
+          mode: importMode,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to import backup");
+      }
+
+      const data = await response.json();
+      
+      setImportFile(null);
+      setImportPreview(null);
+      setShowBackupSettings(false);
+      
+      setFeedback({ type: "success", text: `Imported ${data.importedCount} entries!` });
+      setTimeout(() => setFeedback(null), 3000);
+      
+      const entriesResponse = await fetch(`/api/entries?userId=${user.id}`);
+      if (entriesResponse.ok) {
+        const entriesData = await entriesResponse.json();
+        const normalized: MoodEntry[] = entriesData.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string }) => ({
+          id: entry.id,
+          mood: entry.mood,
+          note: entry.note ?? "",
+          tags: entry.tags ?? [],
+          date: entry.date.slice(0, 10),
+          createdAt: entry.createdAt,
+        }));
+        setEntries(normalized);
+      }
+    } catch (error) {
+      setFeedback({ type: "error", text: "Failed to import backup" });
+      setTimeout(() => setFeedback(null), 3000);
+    }
+  };
+
+  const cancelImport = () => {
+    setImportFile(null);
+    setImportPreview(null);
+  };
+
   const entriesThisWeek = useMemo(() => {
     const now = new Date();
     return entries.filter((entry) => {
@@ -909,6 +1023,14 @@ export default function Home() {
                 <span>{theme === "dark" ? "☀️" : "🌙"}</span>
                 <span>{theme === "dark" ? "Light" : "Dark"}</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setShowBackupSettings(!showBackupSettings)}
+                className="mt-3 flex items-center gap-2 rounded-full border border-white/20 px-3 py-1 text-xs text-slate-400 transition hover:border-white/40"
+              >
+                <span>💾</span>
+                <span>Backup</span>
+              </button>
             </div>
           </div>
         </header>
@@ -1002,6 +1124,99 @@ export default function Home() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {showBackupSettings && (
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Backup & Restore</h3>
+              <button
+                type="button"
+                onClick={() => setShowBackupSettings(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="mt-6 space-y-6">
+              <div className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
+                <h4 className="text-sm font-medium text-white">Export Backup</h4>
+                <p className="mt-1 text-xs text-slate-400">Download all your entries as a JSON file.</p>
+                <button
+                  type="button"
+                  onClick={handleBackupExport}
+                  className="mt-3 rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-200"
+                >
+                  Download Backup
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
+                <h4 className="text-sm font-medium text-white">Import Backup</h4>
+                <p className="mt-1 text-xs text-slate-400">Restore entries from a backup file.</p>
+                
+                {!importPreview ? (
+                  <div className="mt-3">
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-white/20 px-4 py-2 text-sm text-slate-300 transition hover:border-white/40">
+                      <span>📁</span>
+                      <span>Choose File</span>
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleImportFile}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-sm text-emerald-300">{importPreview.entries.length} entries found in file</p>
+                    
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 text-sm text-slate-300">
+                        <input
+                          type="radio"
+                          name="importMode"
+                          checked={importMode === "merge"}
+                          onChange={() => setImportMode("merge")}
+                          className="text-white"
+                        />
+                        Merge (skip duplicates)
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-slate-300">
+                        <input
+                          type="radio"
+                          name="importMode"
+                          checked={importMode === "replace"}
+                          onChange={() => setImportMode("replace")}
+                          className="text-white"
+                        />
+                        Replace (delete existing)
+                      </label>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleImportConfirm}
+                        className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-600"
+                      >
+                        Import
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelImport}
+                        className="rounded-lg border border-white/20 px-4 py-2 text-sm text-slate-300 transition hover:border-white/40"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
