@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userId, mood, note, tags, date } = body;
+    const { userId, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication } = body;
 
     if (!userId || !mood || !date) {
       return NextResponse.json({ error: "userId, mood and date are required" }, { status: 400 });
@@ -38,6 +38,10 @@ export async function POST(request: Request) {
         note,
         tags: tags && tags.length > 0 ? JSON.stringify(tags) : null,
         date: new Date(date),
+        sleepHours: sleepHours ?? null,
+        exerciseMinutes: exerciseMinutes ?? null,
+        waterIntake: waterIntake ?? null,
+        medication: medication ?? null,
       },
     });
 
@@ -54,7 +58,7 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     const body = await request.json();
-    const { id, mood, note, tags, date } = body;
+    const { id, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication } = body;
 
     if (!id || !mood || !date) {
       return NextResponse.json({ error: "id, mood and date are required" }, { status: 400 });
@@ -67,6 +71,10 @@ export async function PUT(request: Request) {
         note,
         tags: tags && tags.length > 0 ? JSON.stringify(tags) : null,
         date: new Date(date),
+        sleepHours: sleepHours ?? null,
+        exerciseMinutes: exerciseMinutes ?? null,
+        waterIntake: waterIntake ?? null,
+        medication: medication ?? null,
       },
     });
 

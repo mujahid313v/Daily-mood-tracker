@@ -59,8 +59,12 @@ type MoodEntry = {
   mood: MoodId;
   note: string;
   tags: string[];
-  date: string; // ISO
+  date: string;
   createdAt: string;
+  sleepHours?: number | null;
+  exerciseMinutes?: number | null;
+  waterIntake?: number | null;
+  medication?: string | null;
 };
 
 type Theme = "dark" | "light";
@@ -286,12 +290,40 @@ export default function Home() {
   const [editNote, setEditNote] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editTags, setEditTags] = useState<string[]>([]);
+  const [editSleepHours, setEditSleepHours] = useState<number>(8);
+  const [editExerciseMinutes, setEditExerciseMinutes] = useState<number>(0);
+  const [editWaterIntake, setEditWaterIntake] = useState<number>(0);
+  const [editMedication, setEditMedication] = useState<string>("");
   
+  const [sleepHours, setSleepHours] = useState<number>(8);
+  const [exerciseMinutes, setExerciseMinutes] = useState<number>(0);
+  const [waterIntake, setWaterIntake] = useState<number>(0);
+  const [medication, setMedication] = useState<string>("");
+  
+type MoodDistribution = { mood: string; count: number; percentage: number };
+
+type CommunityMoodData = {
+  today: {
+    total: number;
+    distribution: MoodDistribution[];
+    dominantMood: string | null;
+  };
+  week: {
+    total: number;
+    distribution: MoodDistribution[];
+    dominantMood: string | null;
+  };
+};
+
 const [showBackupSettings, setShowBackupSettings] = useState(false);
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
   const [importFile, setImportFile] = useState<File | null>(null);
-  const [importPreview, setImportPreview] = useState<{ entries: any[] } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ entries: MoodEntry[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  
+  const [communityMood, setCommunityMood] = useState<CommunityMoodData | null>(null);
+  const [showCommunityModal, setShowCommunityModal] = useState(false);
+  const [anonymousMood, setAnonymousMood] = useState<MoodId>("good");
 
   useEffect(() => {
     const saved = getAuthUser();
@@ -309,19 +341,38 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
         return;
       }
       const data = await response.json();
-      const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string }) => ({
+      const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string; sleepHours?: number; exerciseMinutes?: number; waterIntake?: number; medication?: string }) => ({
         id: entry.id,
         mood: entry.mood,
         note: entry.note ?? "",
         tags: entry.tags ?? [],
         date: entry.date.slice(0, 10),
         createdAt: entry.createdAt,
+        sleepHours: entry.sleepHours ?? null,
+        exerciseMinutes: entry.exerciseMinutes ?? null,
+        waterIntake: entry.waterIntake ?? null,
+        medication: entry.medication ?? null,
       }));
       setEntries(normalized);
       setTimeout(() => setLoading(false), 0);
     };
 
     fetchEntries();
+  }, []);
+
+  useEffect(() => {
+    const fetchCommunityMood = async () => {
+      try {
+        const response = await fetch("/api/community/mood");
+        if (response.ok) {
+          const data = await response.json();
+          setCommunityMood(data);
+        }
+      } catch (error) {
+        console.error("Failed to fetch community mood", error);
+      }
+    };
+    fetchCommunityMood();
   }, []);
 
   useEffect(() => {
@@ -500,7 +551,7 @@ const filteredEntries = useMemo(() => {
     const response = await fetch("/api/entries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id, mood, note: note.trim(), tags: selectedTags, date }),
+      body: JSON.stringify({ userId: user.id, mood, note: note.trim(), tags: selectedTags, date, sleepHours, exerciseMinutes, waterIntake, medication }),
     });
 
     const data = await response.json();
@@ -517,6 +568,10 @@ const filteredEntries = useMemo(() => {
       tags: data.entry.tags ?? [],
       date: data.entry.date.slice(0, 10),
       createdAt: data.entry.createdAt,
+      sleepHours: data.entry.sleepHours,
+      exerciseMinutes: data.entry.exerciseMinutes,
+      waterIntake: data.entry.waterIntake,
+      medication: data.entry.medication,
     };
 
     setEntries((prev) => [newEntry, ...prev]);
@@ -524,6 +579,10 @@ const filteredEntries = useMemo(() => {
     setDate(todayISO());
     setMood("good");
     setSelectedTags([]);
+    setSleepHours(8);
+    setExerciseMinutes(0);
+    setWaterIntake(0);
+    setMedication("");
     setFeedback({ type: "success", text: "Mood saved!" });
     setTimeout(() => setFeedback(null), 3000);
   };
@@ -534,6 +593,10 @@ const filteredEntries = useMemo(() => {
     setEditNote(entry.note);
     setEditDate(entry.date);
     setEditTags(entry.tags || []);
+    setEditSleepHours(entry.sleepHours ?? 8);
+    setEditExerciseMinutes(entry.exerciseMinutes ?? 0);
+    setEditWaterIntake(entry.waterIntake ?? 0);
+    setEditMedication(entry.medication ?? "");
   };
 
   const saveEdit = async () => {
@@ -542,7 +605,17 @@ const filteredEntries = useMemo(() => {
     const response = await fetch("/api/entries", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: editingEntry.id, mood: editMood, note: editNote.trim(), tags: editTags, date: editDate }),
+      body: JSON.stringify({ 
+        id: editingEntry.id, 
+        mood: editMood, 
+        note: editNote.trim(), 
+        tags: editTags, 
+        date: editDate,
+        sleepHours: editSleepHours,
+        exerciseMinutes: editExerciseMinutes,
+        waterIntake: editWaterIntake,
+        medication: editMedication,
+      }),
     });
 
     const data = await response.json();
@@ -555,7 +628,7 @@ const filteredEntries = useMemo(() => {
     setEntries((prev) =>
       prev.map((e) =>
         e.id === editingEntry.id
-          ? { ...e, mood: editMood, note: editNote, tags: editTags, date: editDate }
+          ? { ...e, mood: editMood, note: editNote, tags: editTags, date: editDate, sleepHours: editSleepHours, exerciseMinutes: editExerciseMinutes, waterIntake: editWaterIntake, medication: editMedication }
           : e
       )
     );
@@ -960,6 +1033,54 @@ const filteredEntries = useMemo(() => {
     return correlations.sort((a, b) => b.total - a.total);
   }, [entries, dateFilter, filteredEntries, customTags]);
 
+  const activityCorrelationData = useMemo(() => {
+    const targetEntries = dateFilter === "all" ? entries : filteredEntries;
+    const entriesWithActivity = targetEntries.filter(e => e.sleepHours != null || e.exerciseMinutes != null || e.waterIntake != null);
+    
+    if (entriesWithActivity.length < 3) return null;
+
+    const avgMoodWithSleep = entriesWithActivity.filter(e => (e.sleepHours || 0) >= 7).reduce((sum, e) => sum + moodScore[e.mood], 0) / entriesWithActivity.filter(e => (e.sleepHours || 0) >= 7).length || 0;
+    const avgMoodWithoutSleep = entriesWithActivity.filter(e => (e.sleepHours || 0) < 7).reduce((sum, e) => sum + moodScore[e.mood], 0) / entriesWithActivity.filter(e => (e.sleepHours || 0) < 7).length || 0;
+    
+    const avgMoodWithExercise = entriesWithActivity.filter(e => (e.exerciseMinutes || 0) > 0).reduce((sum, e) => sum + moodScore[e.mood], 0) / entriesWithActivity.filter(e => (e.exerciseMinutes || 0) > 0).length || 0;
+    const avgMoodWithoutExercise = entriesWithActivity.filter(e => (e.exerciseMinutes || 0) === 0).reduce((sum, e) => sum + moodScore[e.mood], 0) / entriesWithActivity.filter(e => (e.exerciseMinutes || 0) === 0).length || 0;
+    
+    const avgMoodWithWater = entriesWithActivity.filter(e => (e.waterIntake || 0) >= 8).reduce((sum, e) => sum + moodScore[e.mood], 0) / entriesWithActivity.filter(e => (e.waterIntake || 0) >= 8).length || 0;
+    const avgMoodWithoutWater = entriesWithActivity.filter(e => (e.waterIntake || 0) < 8).reduce((sum, e) => sum + moodScore[e.mood], 0) / entriesWithActivity.filter(e => (e.waterIntake || 0) < 8).length || 0;
+
+    const avgSleepHours = entriesWithActivity.reduce((sum, e) => sum + (e.sleepHours || 0), 0) / entriesWithActivity.length;
+    const avgExerciseMinutes = entriesWithActivity.reduce((sum, e) => sum + (e.exerciseMinutes || 0), 0) / entriesWithActivity.length;
+    const avgWaterIntake = entriesWithActivity.reduce((sum, e) => sum + (e.waterIntake || 0), 0) / entriesWithActivity.length;
+
+    const sleepDiff = avgMoodWithSleep - avgMoodWithoutSleep;
+    const exerciseDiff = avgMoodWithExercise - avgMoodWithoutExercise;
+    const waterDiff = avgMoodWithWater - avgMoodWithoutWater;
+
+    return {
+      sleepDiff,
+      exerciseDiff,
+      waterDiff,
+      avgSleepHours: avgSleepHours.toFixed(1),
+      avgExerciseMinutes: avgExerciseMinutes.toFixed(0),
+      avgWaterIntake: avgWaterIntake.toFixed(1),
+      entriesWithActivity: entriesWithActivity.length,
+    };
+  }, [entries, dateFilter, filteredEntries]);
+
+  const activityStreak = useMemo(() => {
+    if (entries.length === 0) return 0;
+    let streak = 0;
+    const sortedDates = [...entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    for (const entry of sortedDates) {
+      if (entry.exerciseMinutes && entry.exerciseMinutes > 0) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+    return streak;
+  }, [entries]);
+
   const trendDirection = useMemo(() => {
     if (lineChartData.filter((d) => d.score !== null).length < 7) return "stable";
     const recent = lineChartData.slice(-7).filter((d) => d.score !== null);
@@ -1043,6 +1164,14 @@ const filteredEntries = useMemo(() => {
               >
                 <span>💾</span>
                 <span>Backup</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCommunityModal(true)}
+                className="mt-3 flex items-center gap-2 rounded-full border border-white/20 px-3 py-1 text-xs text-slate-400 transition hover:border-white/40"
+              >
+                <span>🌍</span>
+                <span>Community</span>
               </button>
             </div>
           </div>
@@ -1372,6 +1501,57 @@ const filteredEntries = useMemo(() => {
                 )}
               </div>
 
+              <div className="space-y-3">
+                <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Activities</span>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex flex-col text-sm text-slate-200">
+                    <span className="flex items-center gap-2 text-xs text-slate-400">😴 Sleep (hours)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="24"
+                      step="0.5"
+                      value={sleepHours}
+                      onChange={(e) => setSleepHours(parseFloat(e.target.value) || 0)}
+                      className="mt-2 rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-base text-white outline-none transition focus:border-white/40"
+                    />
+                  </label>
+                  <label className="flex flex-col text-sm text-slate-200">
+                    <span className="flex items-center gap-2 text-xs text-slate-400">🏃 Exercise (minutes)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="480"
+                      value={exerciseMinutes}
+                      onChange={(e) => setExerciseMinutes(parseInt(e.target.value) || 0)}
+                      className="mt-2 rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-base text-white outline-none transition focus:border-white/40"
+                    />
+                  </label>
+                  <label className="flex flex-col text-sm text-slate-200">
+                    <span className="flex items-center gap-2 text-xs text-slate-400">💧 Water (glasses)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="20"
+                      value={waterIntake}
+                      onChange={(e) => setWaterIntake(parseInt(e.target.value) || 0)}
+                      className="mt-2 rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-base text-white outline-none transition focus:border-white/40"
+                    />
+                  </label>
+                  <label className="flex flex-col text-sm text-slate-200">
+                    <span className="flex items-center gap-2 text-xs text-slate-400">💊 Medication/Supplements</span>
+                    <input
+                      type="text"
+                      maxLength={50}
+                      value={medication}
+                      onChange={(e) => setMedication(e.target.value)}
+                      placeholder="Optional..."
+                      className="mt-2 rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-base text-white placeholder:text-slate-500 outline-none transition focus:border-white/40"
+                    />
+                  </label>
+                </div>
+              </div>
+
               <button
                 type="submit"
                 className="w-full rounded-2xl bg-gradient-to-r from-teal-200 via-white to-rose-200 px-4 py-3 text-base font-semibold text-slate-900 transition hover:opacity-90"
@@ -1504,8 +1684,33 @@ const filteredEntries = useMemo(() => {
                     {tagCorrelationData.length >= 5 && (
                       <span className="rounded-full bg-cyan-500/20 border border-cyan-500/50 px-3 py-1 text-xs text-cyan-300">🏷️ Tag Master</span>
                     )}
+                    {activityStreak >= 3 && (
+                      <span className="rounded-full bg-indigo-500/20 border border-indigo-500/50 px-3 py-1 text-xs text-indigo-300">💪 Activity Active</span>
+                    )}
                   </div>
                 </div>
+
+                {activityCorrelationData && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400 mb-3">
+                      <span>🏃</span> Activity Insights
+                    </div>
+                    <div className="space-y-3 text-sm">
+                      {activityCorrelationData.sleepDiff > 0.3 && (
+                        <p className="text-emerald-300">😴 When you sleep 7+ hours, your mood is {Math.round(activityCorrelationData.sleepDiff * 20)}% better!</p>
+                      )}
+                      {activityCorrelationData.exerciseDiff > 0.3 && (
+                        <p className="text-emerald-300">🏃 On days you exercise, your mood is {Math.round(activityCorrelationData.exerciseDiff * 20)}% better!</p>
+                      )}
+                      {activityCorrelationData.waterDiff > 0.3 && (
+                        <p className="text-emerald-300">💧 When you drink 8+ glasses of water, your mood improves by {Math.round(activityCorrelationData.waterDiff * 20)}%!</p>
+                      )}
+                      <p className="text-slate-400">
+                        Avg: {activityCorrelationData.avgSleepHours}h sleep, {activityCorrelationData.avgExerciseMinutes}min exercise, {activityCorrelationData.avgWaterIntake} glasses water
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2088,6 +2293,56 @@ const filteredEntries = useMemo(() => {
                     })}
                   </div>
                 </div>
+
+                <div className="space-y-2">
+                  <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Activities</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex flex-col text-sm text-slate-200">
+                      <span className="text-xs text-slate-400">😴 Sleep (hours)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="24"
+                        step="0.5"
+                        value={editSleepHours}
+                        onChange={(e) => setEditSleepHours(parseFloat(e.target.value) || 0)}
+                        className="mt-1 rounded-xl border border-white/10 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none transition focus:border-white/40"
+                      />
+                    </label>
+                    <label className="flex flex-col text-sm text-slate-200">
+                      <span className="text-xs text-slate-400">🏃 Exercise (min)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="480"
+                        value={editExerciseMinutes}
+                        onChange={(e) => setEditExerciseMinutes(parseInt(e.target.value) || 0)}
+                        className="mt-1 rounded-xl border border-white/10 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none transition focus:border-white/40"
+                      />
+                    </label>
+                    <label className="flex flex-col text-sm text-slate-200">
+                      <span className="text-xs text-slate-400">💧 Water (glasses)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="20"
+                        value={editWaterIntake}
+                        onChange={(e) => setEditWaterIntake(parseInt(e.target.value) || 0)}
+                        className="mt-1 rounded-xl border border-white/10 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none transition focus:border-white/40"
+                      />
+                    </label>
+                    <label className="flex flex-col text-sm text-slate-200">
+                      <span className="text-xs text-slate-400">💊 Medication</span>
+                      <input
+                        type="text"
+                        maxLength={50}
+                        value={editMedication}
+                        onChange={(e) => setEditMedication(e.target.value)}
+                        className="mt-1 rounded-xl border border-white/10 bg-slate-800 px-2 py-1.5 text-sm text-white placeholder:text-slate-500 outline-none transition focus:border-white/40"
+                      />
+                    </label>
+                  </div>
+                </div>
               </div>
 
               <div className="mt-6 flex gap-3">
@@ -2131,6 +2386,138 @@ const filteredEntries = useMemo(() => {
                   className="flex-1 rounded-2xl bg-rose-600 py-3 text-sm font-semibold text-white transition hover:bg-rose-500"
                 >
                   Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showCommunityModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="mx-4 w-full max-w-lg rounded-3xl border border-white/10 bg-slate-900 p-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-semibold text-white">Community Mood</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCommunityModal(false)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              <p className="mt-3 text-sm text-slate-300">
+                See how others are feeling and share anonymously. No account required - your identity stays private.
+              </p>
+
+              {communityMood && communityMood.week.total > 0 && (
+                <div className="mt-6 space-y-4">
+                  <div className="rounded-2xl border border-white/10 bg-slate-800/50 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Today&apos;s Community</p>
+                    {communityMood.today.total > 0 ? (
+                      <div className="mt-3">
+                        <div className="flex h-3 overflow-hidden rounded-full bg-slate-700">
+                          {communityMood.today.distribution?.map((d: { mood: string; percentage: number }) => (
+                            <div
+                              key={d.mood}
+                              className="h-full"
+                              style={{
+                                width: `${d.percentage}%`,
+                                backgroundColor: MOOD_COLORS[d.mood as MoodId],
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {communityMood.today.distribution?.map((d: { mood: string; percentage: number; count: number }) => (
+                            <span key={d.mood} className="flex items-center gap-1 text-xs text-slate-300">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: MOOD_COLORS[d.mood as MoodId] }} />
+                              {d.percentage}%
+                            </span>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-sm text-slate-400">{communityMood.today.total} people shared today</p>
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-sm text-slate-400">Be the first to share today!</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-slate-800/50 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">This Week</p>
+                    <div className="mt-3">
+                      <p className="text-2xl font-semibold text-white">{communityMood.week.total}</p>
+                      <p className="text-xs text-slate-400">total submissions</p>
+                    </div>
+                  </div>
+
+                  {user && entries.length > 0 && (
+                    <div className="rounded-2xl border border-white/10 bg-slate-800/50 p-4">
+                      <p className="text-xs uppercase tracking-widest text-slate-400">You vs Community</p>
+                      <p className="mt-2 text-sm text-slate-300">
+                        Your average: <span className="font-semibold text-white">{averageScore.toFixed(1)}/5.0</span>
+                        {communityMood.week.dominantMood && (
+                          <> (Community dominant: <span className="font-semibold">{findMood(communityMood.week.dominantMood as MoodId).emoji} {findMood(communityMood.week.dominantMood as MoodId).label}</span>)</>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="mt-6">
+                <p className="text-sm text-slate-300 mb-3">Share your mood anonymously</p>
+                <div className="grid grid-cols-5 gap-2">
+                  {MOOD_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setAnonymousMood(option.id)}
+                      className={`flex flex-col items-center gap-1 rounded-xl border p-3 transition ${
+                        anonymousMood === option.id
+                          ? "border-white/40 bg-white/10"
+                          : "border-white/10 hover:border-white/30"
+                      }`}
+                    >
+                      <span className="text-2xl">{option.emoji}</span>
+                      <span className="text-xs text-slate-300">{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCommunityModal(false)}
+                  className="flex-1 rounded-2xl border border-white/20 py-3 text-sm font-medium text-slate-300 transition hover:border-white/40"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const response = await fetch("/api/community/mood", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ mood: anonymousMood }),
+                      });
+                      if (response.ok) {
+                        const res = await fetch("/api/community/mood");
+                        if (res.ok) {
+                          const data = await res.json();
+                          setCommunityMood(data);
+                        }
+                        alert("Mood shared anonymously! Thank you!");
+                      }
+                    } catch (error) {
+                      console.error("Failed to share mood", error);
+                    }
+                  }}
+                  className="flex-1 rounded-2xl bg-gradient-to-r from-teal-200 via-white to-rose-200 py-3 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+                >
+                  Share Anonymously
                 </button>
               </div>
             </div>
