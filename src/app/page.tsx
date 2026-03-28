@@ -65,6 +65,7 @@ type MoodEntry = {
   exerciseMinutes?: number | null;
   waterIntake?: number | null;
   medication?: string | null;
+  completedActivities?: string[] | null;
 };
 
 type Theme = "dark" | "light";
@@ -91,6 +92,32 @@ const MOOD_COLORS: Record<MoodId, string> = {
   low: "#fb923c",
   stressed: "#fb7185",
 };
+
+type SelfCareActivity = {
+  id: string;
+  label: string;
+  emoji: string;
+  duration: string;
+  moods: string[];
+  description: string;
+};
+
+const SELF_CARE_ACTIVITIES: SelfCareActivity[] = [
+  { id: "deep-breathing", label: "Deep Breathing", emoji: "🌬️", duration: "5 min", moods: ["stressed", "low"], description: "Take 5 deep breaths" },
+  { id: "meditation", label: "Meditation", emoji: "🧘", duration: "10 min", moods: ["stressed", "low", "neutral"], description: "Meditate for 10 minutes" },
+  { id: "walk", label: "Short Walk", emoji: "🚶", duration: "15 min", moods: ["low", "stressed", "neutral"], description: "Go for a short walk" },
+  { id: "stretch", label: "Stretching", emoji: "🤸", duration: "10 min", moods: ["stressed", "low"], description: "Do some stretches" },
+  { id: "music", label: "Listen to Music", emoji: "🎵", duration: "15 min", moods: ["low", "stressed"], description: "Listen to calming music" },
+  { id: "journal", label: "Journaling", emoji: "📝", duration: "10 min", moods: ["low", "stressed", "neutral"], description: "Write in your journal" },
+  { id: "water", label: "Drink Water", emoji: "💧", duration: "2 min", moods: ["low", "stressed", "neutral"], description: "Drink a glass of water" },
+  { id: "gratitude", label: "Gratitude List", emoji: "🙏", duration: "5 min", moods: ["low", "neutral"], description: "Write 3 things you're grateful for" },
+  { id: "call-friend", label: "Call a Friend", emoji: "📞", duration: "15 min", moods: ["low", "stressed"], description: "Connect with a loved one" },
+  { id: "nature", label: "Nature Time", emoji: "🌳", duration: "20 min", moods: ["low", "stressed", "neutral"], description: "Spend time outdoors" },
+  { id: "exercise", label: "Quick Exercise", emoji: "🏃", duration: "15 min", moods: ["low", "neutral"], description: "Do some light exercise" },
+  { id: "tea", label: "Drink Tea", emoji: "🍵", duration: "10 min", moods: ["stressed", "low"], description: "Make and enjoy a warm drink" },
+];
+
+type SelfCareActivityId = string;
 
 const getMoodColor = (mood: MoodId) => MOOD_COLORS[mood];
 
@@ -294,11 +321,17 @@ export default function Home() {
   const [editExerciseMinutes, setEditExerciseMinutes] = useState<number>(0);
   const [editWaterIntake, setEditWaterIntake] = useState<number>(0);
   const [editMedication, setEditMedication] = useState<string>("");
+  const [editCompletedActivities, setEditCompletedActivities] = useState<SelfCareActivityId[]>([]);
   
   const [sleepHours, setSleepHours] = useState<number>(8);
   const [exerciseMinutes, setExerciseMinutes] = useState<number>(0);
   const [waterIntake, setWaterIntake] = useState<number>(0);
   const [medication, setMedication] = useState<string>("");
+  
+  const [selectedActivities, setSelectedActivities] = useState<SelfCareActivityId[]>([]);
+  const [suggestedActivities, setSuggestedActivities] = useState<SelfCareActivity[]>([]);
+  const [showActivitySuggestions, setShowActivitySuggestions] = useState(false);
+  const [completedActivityEntries, setCompletedActivityEntries] = useState<Record<string, string[]>>({});
   
 type MoodDistribution = { mood: string; count: number; percentage: number };
 
@@ -341,7 +374,7 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
         return;
       }
       const data = await response.json();
-      const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string; sleepHours?: number; exerciseMinutes?: number; waterIntake?: number; medication?: string }) => ({
+      const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string; sleepHours?: number; exerciseMinutes?: number; waterIntake?: number; medication?: string; completedActivities?: string[] }) => ({
         id: entry.id,
         mood: entry.mood,
         note: entry.note ?? "",
@@ -352,7 +385,16 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
         exerciseMinutes: entry.exerciseMinutes ?? null,
         waterIntake: entry.waterIntake ?? null,
         medication: entry.medication ?? null,
+        completedActivities: entry.completedActivities ?? null,
       }));
+      
+      const activityMap: Record<string, string[]> = {};
+      normalized.forEach((entry) => {
+        if (entry.completedActivities && entry.completedActivities.length > 0) {
+          activityMap[entry.date] = entry.completedActivities;
+        }
+      });
+      setCompletedActivityEntries(activityMap);
       setEntries(normalized);
       setTimeout(() => setLoading(false), 0);
     };
@@ -374,6 +416,19 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
     };
     fetchCommunityMood();
   }, []);
+
+  useEffect(() => {
+    if (mood === "low" || mood === "stressed" || mood === "neutral") {
+      const suggestions = SELF_CARE_ACTIVITIES
+        .filter((activity) => (activity.moods as readonly string[]).includes(mood))
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 4);
+      setSuggestedActivities([...suggestions]);
+      setShowActivitySuggestions(true);
+    } else {
+      setShowActivitySuggestions(false);
+    }
+  }, [mood]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -551,7 +606,7 @@ const filteredEntries = useMemo(() => {
     const response = await fetch("/api/entries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id, mood, note: note.trim(), tags: selectedTags, date, sleepHours, exerciseMinutes, waterIntake, medication }),
+      body: JSON.stringify({ userId: user.id, mood, note: note.trim(), tags: selectedTags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities: selectedActivities }),
     });
 
     const data = await response.json();
@@ -572,6 +627,7 @@ const filteredEntries = useMemo(() => {
       exerciseMinutes: data.entry.exerciseMinutes,
       waterIntake: data.entry.waterIntake,
       medication: data.entry.medication,
+      completedActivities: data.entry.completedActivities,
     };
 
     setEntries((prev) => [newEntry, ...prev]);
@@ -583,6 +639,7 @@ const filteredEntries = useMemo(() => {
     setExerciseMinutes(0);
     setWaterIntake(0);
     setMedication("");
+    setSelectedActivities([]);
     setFeedback({ type: "success", text: "Mood saved!" });
     setTimeout(() => setFeedback(null), 3000);
   };
@@ -597,6 +654,7 @@ const filteredEntries = useMemo(() => {
     setEditExerciseMinutes(entry.exerciseMinutes ?? 0);
     setEditWaterIntake(entry.waterIntake ?? 0);
     setEditMedication(entry.medication ?? "");
+    setEditCompletedActivities(entry.completedActivities ?? []);
   };
 
   const saveEdit = async () => {
@@ -615,6 +673,7 @@ const filteredEntries = useMemo(() => {
         exerciseMinutes: editExerciseMinutes,
         waterIntake: editWaterIntake,
         medication: editMedication,
+        completedActivities: editCompletedActivities,
       }),
     });
 
@@ -628,7 +687,7 @@ const filteredEntries = useMemo(() => {
     setEntries((prev) =>
       prev.map((e) =>
         e.id === editingEntry.id
-          ? { ...e, mood: editMood, note: editNote, tags: editTags, date: editDate, sleepHours: editSleepHours, exerciseMinutes: editExerciseMinutes, waterIntake: editWaterIntake, medication: editMedication }
+          ? { ...e, mood: editMood, note: editNote, tags: editTags, date: editDate, sleepHours: editSleepHours, exerciseMinutes: editExerciseMinutes, waterIntake: editWaterIntake, medication: editMedication, completedActivities: editCompletedActivities }
           : e
       )
     );
@@ -1065,6 +1124,46 @@ const filteredEntries = useMemo(() => {
       avgWaterIntake: avgWaterIntake.toFixed(1),
       entriesWithActivity: entriesWithActivity.length,
     };
+  }, [entries, dateFilter, filteredEntries]);
+
+  const selfCareActivityEffectiveness = useMemo(() => {
+    const targetEntries = dateFilter === "all" ? entries : filteredEntries;
+    const entriesWithActivities = targetEntries.filter(e => e.completedActivities && e.completedActivities.length > 0);
+    
+    if (entriesWithActivities.length < 2) return null;
+
+    const activityStats: Record<string, { count: number; totalMood: number; avgMood: number; moodScores: number[] }> = {};
+    
+    SELF_CARE_ACTIVITIES.forEach(activity => {
+      activityStats[activity.id] = { count: 0, totalMood: 0, avgMood: 0, moodScores: [] };
+    });
+    
+    entriesWithActivities.forEach(entry => {
+      const activities = entry.completedActivities || [];
+      activities.forEach((activityId: string) => {
+        if (activityStats[activityId]) {
+          activityStats[activityId].count++;
+          activityStats[activityId].totalMood += moodScore[entry.mood];
+          activityStats[activityId].moodScores.push(moodScore[entry.mood]);
+        }
+      });
+    });
+    
+    const results = Object.entries(activityStats)
+      .filter(([_, stats]) => stats.count >= 1)
+      .map(([id, stats]) => {
+        const activity = SELF_CARE_ACTIVITIES.find(a => a.id === id);
+        return {
+          id,
+          label: activity?.label || id,
+          emoji: activity?.emoji || "✅",
+          count: stats.count,
+          avgMood: stats.totalMood / stats.count,
+        };
+      })
+      .sort((a, b) => b.avgMood - a.avgMood);
+
+    return results.length > 0 ? results : null;
   }, [entries, dateFilter, filteredEntries]);
 
   const activityStreak = useMemo(() => {
@@ -1552,6 +1651,68 @@ const filteredEntries = useMemo(() => {
                 </div>
               </div>
 
+              <div className="space-y-3">
+                <span className="text-xs uppercase tracking-[0.35em] text-slate-400">Self-Care Activities</span>
+                <p className="text-xs text-slate-400">Select activities you did today to track what helps your mood.</p>
+                <div className="flex flex-wrap gap-2">
+                  {SELF_CARE_ACTIVITIES.map((activity) => {
+                    const isSelected = selectedActivities.includes(activity.id);
+                    return (
+                      <button
+                        key={activity.id}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedActivities(selectedActivities.filter((a) => a !== activity.id));
+                          } else {
+                            setSelectedActivities([...selectedActivities, activity.id]);
+                          }
+                        }}
+                        className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                          isSelected
+                            ? "bg-gradient-to-r from-teal-200 via-white to-rose-200 text-slate-900"
+                            : "border border-white/20 text-slate-300 hover:border-white/40"
+                        }`}
+                      >
+                        <span>{activity.emoji}</span>
+                        <span>{activity.label}</span>
+                        <span className="text-[10px] opacity-70">{activity.duration}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {showActivitySuggestions && suggestedActivities.length > 0 && (
+                <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-amber-200">
+                    <span>💡</span>
+                    <span>Suggested for your mood</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">Based on how you&apos;re feeling, try these:</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {suggestedActivities.map((activity) => (
+                      <button
+                        key={activity.id}
+                        type="button"
+                        onClick={() => {
+                          if (!selectedActivities.includes(activity.id)) {
+                            setSelectedActivities([...selectedActivities, activity.id]);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 rounded-full border border-amber-400/50 bg-amber-400/20 px-3 py-1.5 text-xs font-medium text-amber-200 transition hover:bg-amber-400/30"
+                      >
+                        <span>{activity.emoji}</span>
+                        <span>{activity.label}</span>
+                        {!selectedActivities.includes(activity.id) && (
+                          <span className="ml-1 text-[10px]">+ add</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 className="w-full rounded-2xl bg-gradient-to-r from-teal-200 via-white to-rose-200 px-4 py-3 text-base font-semibold text-slate-900 transition hover:opacity-90"
@@ -1708,6 +1869,35 @@ const filteredEntries = useMemo(() => {
                       <p className="text-slate-400">
                         Avg: {activityCorrelationData.avgSleepHours}h sleep, {activityCorrelationData.avgExerciseMinutes}min exercise, {activityCorrelationData.avgWaterIntake} glasses water
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                {selfCareActivityEffectiveness && selfCareActivityEffectiveness.length > 0 && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-slate-400 mb-3">
+                      <span>🧘</span> Self-Care Activity Effectiveness
+                    </div>
+                    <p className="text-xs text-slate-400 mb-3">Based on your logged activities, ranked by mood improvement:</p>
+                    <div className="space-y-2">
+                      {selfCareActivityEffectiveness.slice(0, 5).map((activity, idx) => (
+                        <div key={activity.id} className="flex items-center justify-between rounded-lg bg-slate-800/50 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{activity.emoji}</span>
+                            <span className="text-sm text-white">{activity.label}</span>
+                            <span className="text-xs text-slate-500">({activity.count}x)</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-700">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-teal-400 via-emerald-400 to-rose-400"
+                                style={{ width: `${(activity.avgMood / 5) * 100}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-medium text-white">{activity.avgMood.toFixed(1)}</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
