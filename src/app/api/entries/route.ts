@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userId, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication } = body;
+    const { userId, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities } = body;
 
     if (!userId || !mood || !date) {
       return NextResponse.json({ error: "userId, mood and date are required" }, { status: 400 });
@@ -42,10 +42,11 @@ export async function POST(request: Request) {
         exerciseMinutes: exerciseMinutes ?? null,
         waterIntake: waterIntake ?? null,
         medication: medication ?? null,
+        completedActivities: completedActivities && completedActivities.length > 0 ? JSON.stringify(completedActivities) : null,
       },
     });
 
-    return NextResponse.json({ entry: { ...entry, tags: tags || [] } }, { status: 201 });
+    return NextResponse.json({ entry: { ...entry, tags: tags || [], completedActivities: completedActivities || [] } }, { status: 201 });
   } catch (error) {
     console.error("Failed to create entry", error);
     return NextResponse.json(
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     const body = await request.json();
-    const { id, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication } = body;
+    const { id, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities } = body;
 
     if (!id || !mood || !date) {
       return NextResponse.json({ error: "id, mood and date are required" }, { status: 400 });
@@ -75,10 +76,11 @@ export async function PUT(request: Request) {
         exerciseMinutes: exerciseMinutes ?? null,
         waterIntake: waterIntake ?? null,
         medication: medication ?? null,
+        completedActivities: completedActivities && completedActivities.length > 0 ? JSON.stringify(completedActivities) : null,
       },
     });
 
-    return NextResponse.json({ entry: { ...entry, tags: tags || [] } });
+    return NextResponse.json({ entry: { ...entry, tags: tags || [], completedActivities: completedActivities || [] } });
   } catch (error) {
     console.error("Failed to update entry", error);
     return NextResponse.json(
