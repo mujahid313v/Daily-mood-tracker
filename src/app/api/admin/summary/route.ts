@@ -1,12 +1,22 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+const secret = process.env.ADMIN_DASHBOARD_KEY;
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization") || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.replace("Bearer ", "").trim() : authHeader.trim();
-  const secret = process.env.ADMIN_DASHBOARD_KEY;
 
-  if (!secret || !token || token !== secret) {
+  if (!secret || !token || !constantTimeEqual(secret, token)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

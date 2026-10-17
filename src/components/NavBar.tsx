@@ -22,7 +22,12 @@ export function NavBar({ onSignOut }: Props) {
     return () => window.removeEventListener(AUTH_EVENT_NAME, handler);
   }, []);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+    } catch {
+      // ignore logout errors, still clear local state
+    }
     clearAuthUser();
     setIsAuthenticated(false);
     onSignOut?.();

@@ -1,13 +1,28 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
+
+function parseList(value: unknown): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // fall through
+    }
+    return value.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("userId");
-
-  if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 });
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const userId = session.userId;
 
   try {
     const user = await prisma.user.findUnique({
@@ -45,9 +60,14 @@ export async function GET(request: Request) {
         id: entry.id,
         mood: entry.mood,
         note: entry.note,
-        tags: entry.tags ? JSON.parse(entry.tags) : [],
+        tags: parseList(entry.tags),
         date: entry.date.toISOString().slice(0, 10),
         createdAt: entry.createdAt.toISOString(),
+        sleepHours: entry.sleepHours,
+        exerciseMinutes: entry.exerciseMinutes,
+        waterIntake: entry.waterIntake,
+        medication: entry.medication,
+        completedActivities: parseList(entry.completedActivities),
       })),
     };
 

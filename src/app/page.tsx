@@ -198,6 +198,20 @@ const getDayName = (date: Date): string => {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+function parseList(value: unknown): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // fall through
+    }
+    return value.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
 const formatDate = (date: string) =>
   new Date(date).toLocaleDateString(undefined, {
     weekday: "short",
@@ -367,7 +381,7 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
     setTimeout(() => setUser(saved), 0);
 
     const fetchEntries = async () => {
-      const response = await fetch(`/api/entries?userId=${saved.id}`);
+      const response = await fetch("/api/entries", { credentials: "same-origin" });
       if (!response.ok) {
         console.error("Failed to load entries");
         setTimeout(() => setLoading(false), 0);
@@ -378,14 +392,14 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
         id: entry.id,
         mood: entry.mood,
         note: entry.note ?? "",
-        tags: entry.tags ?? [],
+        tags: parseList(entry.tags),
         date: entry.date.slice(0, 10),
         createdAt: entry.createdAt,
         sleepHours: entry.sleepHours ?? null,
         exerciseMinutes: entry.exerciseMinutes ?? null,
         waterIntake: entry.waterIntake ?? null,
         medication: entry.medication ?? null,
-        completedActivities: entry.completedActivities ?? null,
+        completedActivities: parseList(entry.completedActivities),
       }));
       
       const activityMap: Record<string, string[]> = {};
@@ -605,8 +619,9 @@ const filteredEntries = useMemo(() => {
 
     const response = await fetch("/api/entries", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id, mood, note: note.trim(), tags: selectedTags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities: selectedActivities }),
+      body: JSON.stringify({ mood, note: note.trim(), tags: selectedTags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities: selectedActivities }),
     });
 
     const data = await response.json();
@@ -620,14 +635,14 @@ const filteredEntries = useMemo(() => {
       id: data.entry.id,
       mood: data.entry.mood,
       note: data.entry.note ?? "",
-      tags: data.entry.tags ?? [],
+      tags: parseList(data.entry.tags),
       date: data.entry.date.slice(0, 10),
       createdAt: data.entry.createdAt,
       sleepHours: data.entry.sleepHours,
       exerciseMinutes: data.entry.exerciseMinutes,
       waterIntake: data.entry.waterIntake,
       medication: data.entry.medication,
-      completedActivities: data.entry.completedActivities,
+      completedActivities: parseList(data.entry.completedActivities),
     };
 
     setEntries((prev) => [newEntry, ...prev]);
@@ -662,6 +677,7 @@ const filteredEntries = useMemo(() => {
 
     const response = await fetch("/api/entries", {
       method: "PUT",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ 
         id: editingEntry.id, 
@@ -701,6 +717,7 @@ const filteredEntries = useMemo(() => {
 
     const response = await fetch(`/api/entries?id=${deletingEntry.id}`, {
       method: "DELETE",
+      credentials: "same-origin",
     });
 
     if (!response.ok) {
@@ -814,7 +831,7 @@ const filteredEntries = useMemo(() => {
     }
 
     try {
-      const response = await fetch(`/api/backup?userId=${user.id}`);
+      const response = await fetch("/api/backup", { credentials: "same-origin" });
       if (!response.ok) {
         throw new Error("Failed to create backup");
       }
@@ -870,9 +887,9 @@ const filteredEntries = useMemo(() => {
     try {
       const response = await fetch("/api/backup/import", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: user.id,
           entries: importPreview.entries,
           mode: importMode,
         }),
@@ -891,16 +908,21 @@ const filteredEntries = useMemo(() => {
       setFeedback({ type: "success", text: `Imported ${data.importedCount} entries!` });
       setTimeout(() => setFeedback(null), 3000);
       
-      const entriesResponse = await fetch(`/api/entries?userId=${user.id}`);
+      const entriesResponse = await fetch("/api/entries", { credentials: "same-origin" });
       if (entriesResponse.ok) {
         const entriesData = await entriesResponse.json();
-        const normalized: MoodEntry[] = entriesData.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string }) => ({
+        const normalized: MoodEntry[] = entriesData.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string; sleepHours?: number; exerciseMinutes?: number; waterIntake?: number; medication?: string; completedActivities?: string[] }) => ({
           id: entry.id,
           mood: entry.mood,
           note: entry.note ?? "",
-          tags: entry.tags ?? [],
+          tags: parseList(entry.tags),
           date: entry.date.slice(0, 10),
           createdAt: entry.createdAt,
+          sleepHours: entry.sleepHours ?? null,
+          exerciseMinutes: entry.exerciseMinutes ?? null,
+          waterIntake: entry.waterIntake ?? null,
+          medication: entry.medication ?? null,
+          completedActivities: parseList(entry.completedActivities),
         }));
         setEntries(normalized);
       }

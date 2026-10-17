@@ -1,14 +1,31 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
+
+function parseList(value: unknown): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // fall through
+    }
+    return value.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
 
 export async function POST(request: Request) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
-    const { userId, entries, mode } = body;
-
-    if (!userId) {
-      return NextResponse.json({ error: "userId is required" }, { status: 400 });
-    }
+    const { entries, mode } = body;
+    const userId = session.userId;
 
     if (mode === "replace") {
       await prisma.moodEntry.deleteMany({
@@ -35,6 +52,9 @@ export async function POST(request: Request) {
           },
         });
 
+        const tagsArray = parseList(entry.tags);
+        const completedActivitiesArray = parseList(entry.completedActivities);
+
         if (existingEntry && mode === "merge") {
           skippedCount++;
           continue;
@@ -46,7 +66,7 @@ export async function POST(request: Request) {
             data: {
               mood: entry.mood,
               note: entry.note || null,
-              tags: entry.tags && entry.tags.length > 0 ? JSON.stringify(entry.tags) : null,
+              tags: tagsArray.length > 0 ? JSON.stringify(tagsArray) : null,
             },
           });
           importedCount++;
@@ -56,8 +76,16 @@ export async function POST(request: Request) {
               userId,
               mood: entry.mood,
               note: entry.note || null,
-              tags: entry.tags && entry.tags.length > 0 ? JSON.stringify(entry.tags) : null,
+              tags: tagsArray.length > 0 ? JSON.stringify(tagsArray) : null,
               date: new Date(entry.date),
+              sleepHours: entry.sleepHours ?? null,
+              exerciseMinutes: entry.exerciseMinutes ?? null,
+              waterIntake: entry.waterIntake ?? null,
+              medication: entry.medication ?? null,
+              completedActivities:
+                completedActivitiesArray.length > 0
+                  ? JSON.stringify(completedActivitiesArray)
+                  : null,
             },
           });
           importedCount++;
