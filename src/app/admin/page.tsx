@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type AdminSummary = {
   stats: { users: number; entries: number };
@@ -16,59 +16,105 @@ type AdminSummary = {
   }>;
 };
 
-const fetcher = async (path: string, token: string) => {
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+type Status = "checking" | "locked" | "unlocked";
+
+/**
+ * The admin key is exchanged for a short lived HttpOnly cookie by
+ * `POST /api/admin/session`. It is never written to localStorage, so it cannot
+ * be read by any script running on the page.
+ */
+const fetcher = async (path: string) => {
+  const res = await fetch(path, { credentials: "same-origin", cache: "no-store" });
+
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: "Failed to fetch admin data" }));
     throw new Error(error.error || "Failed to fetch admin data");
   }
+
   return res.json();
 };
 
 export default function AdminDashboard() {
-  const [token, setToken] = useState("");
-  const [input, setInput] = useState("");
+  const [status, setStatus] = useState<Status>("checking");
+  const [key, setKey] = useState("");
   const [data, setData] = useState<AdminSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    const stored = localStorage.getItem("mood-admin-token");
-    if (stored) {
-      setToken(prevToken => prevToken || stored);
+  const loadSummary = useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = await fetcher("/api/admin/summary");
+      setData(payload);
+      setError(null);
+      setStatus("unlocked");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+      setData(null);
+      setStatus("locked");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
+  // Restore the session from the HttpOnly cookie on mount.
   useEffect(() => {
-    if (!token) return;
-    
-    const fetchData = async () => {
-      setLoading(true);
+    const restore = async () => {
       try {
-        const payload = await fetcher("/api/admin/summary", token);
-        setData(payload);
-        setError(null);
-      } catch (error: unknown) {
-        if (error instanceof Error) {
-          setError(error.message);
+        const res = await fetch("/api/admin/session", { credentials: "same-origin", cache: "no-store" });
+        const session = res.ok ? await res.json() : { authenticated: false };
+
+        if (session.authenticated) {
+          await loadSummary();
         } else {
-          setError('An error occurred');
+          setStatus("locked");
         }
-        setData(null);
-        localStorage.removeItem("mood-admin-token");
-        setToken("");
-      } finally {
-        setLoading(false);
+      } catch {
+        setStatus("locked");
       }
     };
 
-    fetchData();
-  }, [token]);
+    void restore();
+  }, [loadSummary]);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setToken(input.trim());
-    localStorage.setItem("mood-admin-token", input.trim());
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/admin/session", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: key.trim() }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "Invalid admin key");
+      }
+
+      // The key is discarded immediately — the server holds the session.
+      setKey("");
+      await loadSummary();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+      setStatus("locked");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLock = async () => {
+    try {
+      await fetch("/api/admin/session", { method: "DELETE", credentials: "same-origin" });
+    } catch {
+      // Ignore — the UI is unlocked locally regardless.
+    }
+    setData(null);
+    setError(null);
+    setStatus("locked");
   };
 
   return (
@@ -82,22 +128,34 @@ export default function AdminDashboard() {
       </div>
 
       <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-        {!token ? (
+        {status === "checking" ? (
+          <p className="text-sm text-slate-300">Checking admin session…</p>
+        ) : status === "locked" ? (
           <form onSubmit={handleSubmit} className="space-y-4 text-sm">
             <label className="block text-slate-300">
               Access key
               <input
                 required
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
+                value={key}
+                onChange={(event) => setKey(event.target.value)}
                 placeholder="Paste the admin key"
                 type="password"
+                autoComplete="off"
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none transition focus:border-white/40"
               />
             </label>
-            <button className="w-full rounded-2xl bg-white/90 px-4 py-3 font-semibold text-slate-900 transition hover:bg-white">
-              Unlock dashboard
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-2xl bg-white/90 px-4 py-3 font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {loading ? "Unlocking…" : "Unlock dashboard"}
             </button>
+            {error && (
+              <p className="rounded-2xl border border-rose-400/40 bg-rose-400/10 px-4 py-3 text-rose-200">
+                {error}
+              </p>
+            )}
           </form>
         ) : loading ? (
           <p className="text-sm text-slate-300">Loading...</p>
@@ -107,6 +165,17 @@ export default function AdminDashboard() {
           </div>
         ) : data ? (
           <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Dashboard unlocked</p>
+              <button
+                type="button"
+                onClick={handleLock}
+                className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300 transition hover:border-white/40"
+              >
+                Lock dashboard
+              </button>
+            </div>
+
             <div className="grid gap-6 sm:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-5">
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Users</p>

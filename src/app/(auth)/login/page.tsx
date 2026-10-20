@@ -3,21 +3,22 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getAuthUser, saveAuthUser } from "@/lib/auth-storage";
+import { emitAuthChange } from "@/lib/session-client";
+import { useCurrentUser } from "@/lib/use-current-user";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { user, loading: sessionLoading } = useCurrentUser();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const existing = getAuthUser();
-    if (existing) {
+    if (!sessionLoading && user) {
       router.replace("/");
     }
-  }, [router]);
+  }, [router, sessionLoading, user]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -37,9 +38,11 @@ export default function LoginPage() {
         throw new Error(data.error || "Unable to login");
       }
 
-      saveAuthUser(data.user);
+      // The session cookie was set by the server; tell the rest of the app.
+      emitAuthChange();
       setMessage(`Welcome back ${data.user.email}! Redirecting…`);
       router.push("/");
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Something went wrong");
     } finally {
@@ -62,6 +65,7 @@ export default function LoginPage() {
             <input
               required
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/70 px-3 py-2 text-white outline-none transition focus:border-white/40"
@@ -74,6 +78,7 @@ export default function LoginPage() {
             <input
               required
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/70 px-3 py-2 text-white outline-none transition focus:border-white/40"

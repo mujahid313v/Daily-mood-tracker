@@ -1,31 +1,42 @@
 import { NextResponse } from "next/server";
-import { registerUser } from "@/lib/controllers/auth";
-import { signToken, setSessionCookie } from "@/lib/session";
+import { registerUser, DuplicateEmailError } from "@/lib/controllers/auth";
+import { signSessionToken, setSessionCookie } from "@/lib/session";
+import { registerSchema } from "@/lib/validation";
+import { getClientIp, readJson, tooManyRequests, validationError } from "@/lib/http";
+import { rateLimit } from "@/lib/rate-limit";
+
+/** Max 5 registration attempts per minute per IP. */
+const REGISTER_LIMIT = 5;
+const REGISTER_WINDOW_MS = 60_000;
 
 export async function POST(request: Request) {
+  const limit = rateLimit(`register:${getClientIp(request)}`, REGISTER_LIMIT, REGISTER_WINDOW_MS);
+  if (!limit.allowed) {
+    return tooManyRequests(limit);
+  }
+
+  const body = await readJson(request);
+  const parsed = registerSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return validationError(parsed.error);
+  }
+
   try {
-    const body = await request.json();
-    const { email, password, name } = body;
+    const user = await registerUser(parsed.data.email, parsed.data.password, parsed.data.name);
 
-    if (!email || !password) {
-      return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
-    }
-
-    const user = await registerUser(email, password, name);
-
-    const token = await signToken({ userId: user.id, email: user.email });
+    const token = await signSessionToken({ userId: user.id, email: user.email });
 
     const response = NextResponse.json({ user }, { status: 201 });
     setSessionCookie(response.headers, token);
 
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error";
-    console.error("Failed to register user", error);
+    if (error instanceof DuplicateEmailError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
 
-    let status = 500;
-    if (message === "Email already registered") status = 409;
-
-    return NextResponse.json({ error: message }, { status });
+    console.error("Failed to register user");
+    return NextResponse.json({ error: "Unable to create account" }, { status: 500 });
   }
 }

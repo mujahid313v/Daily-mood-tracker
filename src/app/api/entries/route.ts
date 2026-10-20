@@ -1,182 +1,172 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
+import { moodEntrySchema, moodEntryUpdateSchema } from "@/lib/validation";
+import { forbidden, notFound, readJson, unauthorized, validationError } from "@/lib/http";
+import { isUniqueConstraintError } from "@/lib/prisma-error";
+import { serializeEntry, toStoredDate } from "@/lib/entries";
 
-function parseList(value: unknown): string[] {
-  if (Array.isArray(value)) return value;
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed;
-    } catch {
-      // fall through to comma split
-    }
-    return value.split(",").map((s) => s.trim()).filter(Boolean);
-  }
-  return [];
-}
+/**
+ * Mood entry CRUD.
+ *
+ * IDOR protection: the owning user id is ALWAYS taken from the verified session
+ * cookie. It is never read from the query string or the request body, so a
+ * client cannot read, create, update or delete another user's entries by
+ * tampering with the payload. The database keeps a unique constraint on
+ * `(userId, date)` which enforces exactly one entry per user per day.
+ */
 
-async function requireAuth(request: Request): Promise<{ userId: string } | null> {
+async function requireUserId(request: Request): Promise<string | null> {
   const session = await getSessionUser(request);
-  if (!session) return null;
-  return { userId: session.userId };
+  return session?.userId ?? null;
 }
 
 export async function GET(request: Request) {
-  const auth = await requireAuth(request);
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await requireUserId(request);
+  if (!userId) {
+    return unauthorized();
   }
 
   const entries = await prisma.moodEntry.findMany({
-    where: { userId: auth.userId },
+    where: { userId },
     orderBy: { date: "desc" },
   });
 
-  const normalized = entries.map((entry) => ({
-    ...entry,
-    tags: parseList(entry.tags),
-    completedActivities: parseList(entry.completedActivities),
-  }));
-
-  return NextResponse.json({ entries: normalized });
+  return NextResponse.json({ entries: entries.map(serializeEntry) });
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAuth(request);
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await requireUserId(request);
+  if (!userId) {
+    return unauthorized();
   }
 
+  const body = await readJson(request);
+  const parsed = moodEntrySchema.safeParse(body);
+
+  if (!parsed.success) {
+    return validationError(parsed.error);
+  }
+
+  const { mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities } = parsed.data;
+
   try {
-    const body = await request.json();
-    const { mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities } = body;
-
-    if (!mood || !date) {
-      return NextResponse.json({ error: "mood and date are required" }, { status: 400 });
-    }
-
-    const tagsArray = parseList(tags);
-    const activitiesArray = parseList(completedActivities);
-
     const entry = await prisma.moodEntry.create({
       data: {
-        userId: auth.userId,
+        // The owner comes from the session, never from the payload.
+        userId,
         mood,
         note: note ?? null,
-        tags: tagsArray.length > 0 ? JSON.stringify(tagsArray) : null,
-        date: new Date(date),
+        tags: tags && tags.length > 0 ? JSON.stringify(tags) : null,
+        date: toStoredDate(date),
         sleepHours: sleepHours ?? null,
         exerciseMinutes: exerciseMinutes ?? null,
         waterIntake: waterIntake ?? null,
         medication: medication ?? null,
-        completedActivities: activitiesArray.length > 0 ? JSON.stringify(activitiesArray) : null,
+        completedActivities:
+          completedActivities && completedActivities.length > 0
+            ? JSON.stringify(completedActivities)
+            : null,
       },
     });
 
-    return NextResponse.json(
-      {
-        entry: {
-          ...entry,
-          tags: tagsArray,
-          completedActivities: activitiesArray,
-        },
-      },
-      { status: 201 }
-    );
+    return NextResponse.json({ entry: serializeEntry(entry) }, { status: 201 });
   } catch (error) {
-    console.error("Failed to create entry", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unexpected error" },
-      { status: 400 }
-    );
+    // The unique index on (userId, date) rejected a second entry for the same day.
+    if (isUniqueConstraintError(error)) {
+      return NextResponse.json(
+        { error: "You already logged a mood for this day" },
+        { status: 409 }
+      );
+    }
+
+    console.error("Failed to create entry");
+    return NextResponse.json({ error: "Unable to save entry" }, { status: 500 });
   }
 }
 
 export async function PUT(request: Request) {
-  const auth = await requireAuth(request);
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await requireUserId(request);
+  if (!userId) {
+    return unauthorized();
+  }
+
+  const body = await readJson(request);
+  const parsed = moodEntryUpdateSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return validationError(parsed.error);
+  }
+
+  const { id, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities } = parsed.data;
+
+  const existing = await prisma.moodEntry.findUnique({ where: { id } });
+  if (!existing) {
+    return notFound("Entry not found");
+  }
+
+  // Ownership check — the entry must belong to the session user.
+  if (existing.userId !== userId) {
+    return forbidden();
   }
 
   try {
-    const body = await request.json();
-    const { id, mood, note, tags, date, sleepHours, exerciseMinutes, waterIntake, medication, completedActivities } = body;
-
-    if (!id || !mood || !date) {
-      return NextResponse.json({ error: "id, mood and date are required" }, { status: 400 });
-    }
-
-    // Verify ownership
-    const existing = await prisma.moodEntry.findUnique({ where: { id } });
-    if (!existing) {
-      return NextResponse.json({ error: "Entry not found" }, { status: 404 });
-    }
-    if (existing.userId !== auth.userId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const tagsArray = parseList(tags);
-    const activitiesArray = parseList(completedActivities);
-
     const entry = await prisma.moodEntry.update({
       where: { id },
       data: {
         mood,
         note: note ?? null,
-        tags: tagsArray.length > 0 ? JSON.stringify(tagsArray) : null,
-        date: new Date(date),
+        tags: tags && tags.length > 0 ? JSON.stringify(tags) : null,
+        date: toStoredDate(date),
         sleepHours: sleepHours ?? null,
         exerciseMinutes: exerciseMinutes ?? null,
         waterIntake: waterIntake ?? null,
         medication: medication ?? null,
-        completedActivities: activitiesArray.length > 0 ? JSON.stringify(activitiesArray) : null,
+        completedActivities:
+          completedActivities && completedActivities.length > 0
+            ? JSON.stringify(completedActivities)
+            : null,
       },
     });
 
-    return NextResponse.json({
-      entry: { ...entry, tags: tagsArray, completedActivities: activitiesArray },
-    });
+    return NextResponse.json({ entry: serializeEntry(entry) });
   } catch (error) {
-    console.error("Failed to update entry", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unexpected error" },
-      { status: 400 }
-    );
+    if (isUniqueConstraintError(error)) {
+      return NextResponse.json(
+        { error: "You already logged a mood for that day" },
+        { status: 409 }
+      );
+    }
+
+    console.error("Failed to update entry");
+    return NextResponse.json({ error: "Unable to update entry" }, { status: 500 });
   }
 }
 
 export async function DELETE(request: Request) {
-  const auth = await requireAuth(request);
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await requireUserId(request);
+  if (!userId) {
+    return unauthorized();
   }
 
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get("id");
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
 
-    if (!id) {
-      return NextResponse.json({ error: "id is required" }, { status: 400 });
-    }
-
-    // Verify ownership
-    const existing = await prisma.moodEntry.findUnique({ where: { id } });
-    if (!existing) {
-      return NextResponse.json({ error: "Entry not found" }, { status: 404 });
-    }
-    if (existing.userId !== auth.userId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    await prisma.moodEntry.delete({ where: { id } });
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Failed to delete entry", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unexpected error" },
-      { status: 400 }
-    );
+  if (!id) {
+    return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
+
+  const existing = await prisma.moodEntry.findUnique({ where: { id } });
+  if (!existing) {
+    return notFound("Entry not found");
+  }
+
+  // Ownership check — the entry must belong to the session user.
+  if (existing.userId !== userId) {
+    return forbidden();
+  }
+
+  await prisma.moodEntry.delete({ where: { id } });
+
+  return NextResponse.json({ success: true });
 }

@@ -1,111 +1,110 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
+import { backupImportSchema } from "@/lib/validation";
+import { readJson, unauthorized, validationError } from "@/lib/http";
+import { parseList } from "@/lib/parse";
 
-function parseList(value: unknown): string[] {
-  if (Array.isArray(value)) return value;
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed;
-    } catch {
-      // fall through
-    }
-    return value.split(",").map((s) => s.trim()).filter(Boolean);
-  }
-  return [];
-}
-
+/**
+ * Imports a previously exported backup.
+ *
+ * The whole payload is validated *before* anything is written, and the write
+ * runs inside a single transaction. In `replace` mode only the entries that are
+ * not part of the backup are deleted, so a failed import can never wipe the
+ * user's history.
+ */
 export async function POST(request: Request) {
   const session = await getSessionUser(request);
   if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthorized();
   }
 
+  const body = await readJson(request);
+  const parsed = backupImportSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return validationError(parsed.error);
+  }
+
+  const userId = session.userId;
+  const mode = parsed.data.mode;
+
   try {
-    const body = await request.json();
-    const { entries, mode } = body;
-    const userId = session.userId;
+    // De-duplicate by day — the last occurrence wins.
+    const incoming = new Map<string, (typeof parsed.data.entries)[number]>();
+    for (const entry of parsed.data.entries) {
+      incoming.set(entry.date, entry);
+    }
+
+    const existing = await prisma.moodEntry.findMany({
+      where: { userId },
+      select: { id: true, date: true },
+    });
+
+    const existingByDay = new Map(
+      existing.map((entry) => [entry.date.toISOString().slice(0, 10), entry.id])
+    );
+
+    const operations: Prisma.PrismaPromise<unknown>[] = [];
 
     if (mode === "replace") {
-      await prisma.moodEntry.deleteMany({
-        where: { userId },
-      });
+      const incomingDays = [...incoming.keys()];
+
+      // Remove every entry that is not part of the backup.
+      operations.push(
+        prisma.moodEntry.deleteMany({
+          where: {
+            userId,
+            ...(incomingDays.length > 0 ? { date: { notIn: incomingDays.map((day) => new Date(`${day}T00:00:00.000Z`)) } } : {}),
+          },
+        })
+      );
     }
 
     let importedCount = 0;
     let skippedCount = 0;
 
-    for (const entry of entries || []) {
-      if (!entry.mood || !entry.date) {
-        skippedCount++;
+    for (const [day, entry] of incoming) {
+      const existingId = existingByDay.get(day);
+
+      if (existingId && mode === "merge") {
+        skippedCount += 1;
         continue;
       }
 
-      try {
-        const existingEntry = await prisma.moodEntry.findUnique({
-          where: {
-            userId_date: {
-              userId,
-              date: new Date(entry.date),
-            },
-          },
-        });
+      const tags = parseList(entry.tags);
+      const completedActivities = parseList(entry.completedActivities);
 
-        const tagsArray = parseList(entry.tags);
-        const completedActivitiesArray = parseList(entry.completedActivities);
+      const data = {
+        mood: entry.mood,
+        note: entry.note ?? null,
+        tags: tags.length > 0 ? JSON.stringify(tags) : null,
+        date: new Date(`${day}T00:00:00.000Z`),
+        sleepHours: entry.sleepHours ?? null,
+        exerciseMinutes: entry.exerciseMinutes ?? null,
+        waterIntake: entry.waterIntake ?? null,
+        medication: entry.medication ?? null,
+        completedActivities:
+          completedActivities.length > 0 ? JSON.stringify(completedActivities) : null,
+      };
 
-        if (existingEntry && mode === "merge") {
-          skippedCount++;
-          continue;
-        }
-
-        if (existingEntry && mode === "replace") {
-          await prisma.moodEntry.update({
-            where: { id: existingEntry.id },
-            data: {
-              mood: entry.mood,
-              note: entry.note || null,
-              tags: tagsArray.length > 0 ? JSON.stringify(tagsArray) : null,
-            },
-          });
-          importedCount++;
-        } else {
-          await prisma.moodEntry.create({
-            data: {
-              userId,
-              mood: entry.mood,
-              note: entry.note || null,
-              tags: tagsArray.length > 0 ? JSON.stringify(tagsArray) : null,
-              date: new Date(entry.date),
-              sleepHours: entry.sleepHours ?? null,
-              exerciseMinutes: entry.exerciseMinutes ?? null,
-              waterIntake: entry.waterIntake ?? null,
-              medication: entry.medication ?? null,
-              completedActivities:
-                completedActivitiesArray.length > 0
-                  ? JSON.stringify(completedActivitiesArray)
-                  : null,
-            },
-          });
-          importedCount++;
-        }
-      } catch (error) {
-        console.error("Failed to import entry", entry, error);
-        skippedCount++;
+      if (existingId) {
+        operations.push(prisma.moodEntry.update({ where: { id: existingId }, data }));
+      } else {
+        operations.push(prisma.moodEntry.create({ data: { ...data, userId } }));
       }
+
+      importedCount += 1;
     }
 
-    return NextResponse.json({
-      success: true,
-      importedCount,
-      skippedCount,
-    });
-  } catch (error) {
-    console.error("Failed to import backup", error);
-    return NextResponse.json(
-      { error: "Failed to import backup" },
-      { status: 500 }
-    );
+    if (operations.length > 0) {
+      await prisma.$transaction(operations);
+    }
+
+    return NextResponse.json({ success: true, importedCount, skippedCount });
+  } catch {
+    console.error("Failed to import backup");
+    return NextResponse.json({ error: "Failed to import backup" }, { status: 500 });
   }
 }

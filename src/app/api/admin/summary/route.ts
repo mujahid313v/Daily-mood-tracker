@@ -1,23 +1,33 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { isAdminRequest } from "@/lib/admin-session";
+import { getClientIp, tooManyRequests, unauthorized } from "@/lib/http";
+import { rateLimit } from "@/lib/rate-limit";
 
-const secret = process.env.ADMIN_DASHBOARD_KEY;
+/**
+ * Admin analytics.
+ *
+ * Protected on the server side by either the HttpOnly admin session cookie or
+ * an `Authorization: Bearer <ADMIN_DASHBOARD_KEY>` header (handy for scripts).
+ * The key comparison itself is constant-time (`crypto.timingSafeEqual`).
+ */
 
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
+/** Max 5 summary requests per minute per IP. */
+const ADMIN_SUMMARY_LIMIT = 5;
+const ADMIN_SUMMARY_WINDOW_MS = 60_000;
 
 export async function GET(request: Request) {
-  const authHeader = request.headers.get("Authorization") || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.replace("Bearer ", "").trim() : authHeader.trim();
+  const limit = rateLimit(
+    `admin:summary:${getClientIp(request)}`,
+    ADMIN_SUMMARY_LIMIT,
+    ADMIN_SUMMARY_WINDOW_MS
+  );
+  if (!limit.allowed) {
+    return tooManyRequests(limit);
+  }
 
-  if (!secret || !token || !constantTimeEqual(secret, token)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!(await isAdminRequest(request))) {
+    return unauthorized();
   }
 
   const [usersCount, entriesCount, users] = await Promise.all([
@@ -25,6 +35,7 @@ export async function GET(request: Request) {
     prisma.moodEntry.count(),
     prisma.user.findMany({
       orderBy: { createdAt: "desc" },
+      take: 200,
       select: {
         id: true,
         email: true,
@@ -49,6 +60,7 @@ export async function GET(request: Request) {
 
   const userRows = users.map((user) => {
     const latestEntry = user.entries.at(0);
+
     return {
       id: user.id,
       email: user.email,
