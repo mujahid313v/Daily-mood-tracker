@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { getAuthUser, type AuthUser } from "@/lib/auth-storage";
-
+import { useCurrentUser } from "@/lib/use-current-user";
 const MOOD_OPTIONS = [
   {
     id: "ecstatic",
@@ -92,6 +91,48 @@ const MOOD_COLORS: Record<MoodId, string> = {
   low: "#fb923c",
   stressed: "#fb7185",
 };
+
+/** Numeric score per mood, used by every average / correlation calculation. */
+const moodScore: Record<MoodId, number> = {
+  ecstatic: 5,
+  good: 4,
+  neutral: 3,
+  low: 2,
+  stressed: 1,
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Local midnight of the given date. */
+const startOfDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+/** Local midnight of today. */
+const startOfToday = (): Date => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+};
+
+/**
+ * Parses a `YYYY-MM-DD` day key into a LOCAL date.
+ *
+ * `new Date("2026-10-20")` is parsed as UTC midnight, which lands on the
+ * previous day for every timezone behind UTC. The API stores days as UTC
+ * midnight, so the client has to read them back as local calendar days.
+ */
+const parseDayKey = (value: string): Date => {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1);
+};
+
+/** Formats a date as a local `YYYY-MM-DD` day key. */
+const toDayKey = (date: Date): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+
+/** Whole days between two timestamps, DST safe. */
+const diffInDays = (a: number, b: number): number => Math.round((a - b) / DAY_MS);
 
 type SelfCareActivity = {
   id: string;
@@ -196,7 +237,7 @@ const getDayName = (date: Date): string => {
   return ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][date.getDay()];
 };
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => toDayKey(new Date());
 
 function parseList(value: unknown): string[] {
   if (Array.isArray(value)) return value;
@@ -213,7 +254,7 @@ function parseList(value: unknown): string[] {
 }
 
 const formatDate = (date: string) =>
-  new Date(date).toLocaleDateString(undefined, {
+  parseDayKey(date).toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -236,7 +277,7 @@ const exportToCSV = (entries: MoodEntry[]) => {
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toDayKey(new Date());
   link.href = url;
   link.download = `mood-entries-${today}.csv`;
   link.click();
@@ -255,21 +296,21 @@ const getDateRangeForFilter = (filter: DateFilter, customStart?: string, customE
     case "7days": {
       const start = new Date(today);
       start.setDate(start.getDate() - 6);
-      return { start: start.toISOString().slice(0, 10), end: todayISO() };
+      return { start: toDayKey(start), end: toDayKey(today) };
     }
     case "30days": {
       const start = new Date(today);
       start.setDate(start.getDate() - 29);
-      return { start: start.toISOString().slice(0, 10), end: todayISO() };
+      return { start: toDayKey(start), end: toDayKey(today) };
     }
     case "thisMonth": {
       const start = new Date(today.getFullYear(), today.getMonth(), 1);
-      return { start: start.toISOString().slice(0, 10), end: todayISO() };
+      return { start: toDayKey(start), end: toDayKey(today) };
     }
     case "lastMonth": {
       const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       const end = new Date(today.getFullYear(), today.getMonth(), 0);
-      return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+      return { start: toDayKey(start), end: toDayKey(end) };
     }
     case "custom":
       return { start: customStart || "", end: customEnd || "" };
@@ -300,13 +341,13 @@ const saveFilterToStorage = (filter: DateFilter, customStart: string, customEnd:
 };
 
 export default function Home() {
+  // The session cookie is the single source of truth — nothing is cached in the browser.
+  const { user, loading } = useCurrentUser();
   const [entries, setEntries] = useState<MoodEntry[]>([]);
   const [mood, setMood] = useState<MoodId>("good");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(todayISO());
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
   
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [customDateStart, setCustomDateStart] = useState("");
@@ -345,7 +386,6 @@ export default function Home() {
   const [selectedActivities, setSelectedActivities] = useState<SelfCareActivityId[]>([]);
   const [suggestedActivities, setSuggestedActivities] = useState<SelfCareActivity[]>([]);
   const [showActivitySuggestions, setShowActivitySuggestions] = useState(false);
-  const [completedActivityEntries, setCompletedActivityEntries] = useState<Record<string, string[]>>({});
   
 type MoodDistribution = { mood: string; count: number; percentage: number };
 
@@ -364,7 +404,6 @@ type CommunityMoodData = {
 
 const [showBackupSettings, setShowBackupSettings] = useState(false);
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
-  const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<{ entries: MoodEntry[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   
@@ -373,27 +412,25 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
   const [anonymousMood, setAnonymousMood] = useState<MoodId>("good");
 
   useEffect(() => {
-    const saved = getAuthUser();
-    if (!saved) {
-      setTimeout(() => setLoading(false), 0);
-      return;
-    }
-    setTimeout(() => setUser(saved), 0);
+    if (loading) return;
+    if (!user) return;
+
+    let cancelled = false;
 
     const fetchEntries = async () => {
-      const response = await fetch("/api/entries", { credentials: "same-origin" });
+      const response = await fetch("/api/entries", { credentials: "same-origin", cache: "no-store" });
       if (!response.ok) {
         console.error("Failed to load entries");
-        setTimeout(() => setLoading(false), 0);
         return;
       }
       const data = await response.json();
+      if (cancelled) return;
       const normalized: MoodEntry[] = data.entries.map((entry: { id: string; mood: MoodId; note?: string; tags?: string[]; date: string; createdAt: string; sleepHours?: number; exerciseMinutes?: number; waterIntake?: number; medication?: string; completedActivities?: string[] }) => ({
         id: entry.id,
         mood: entry.mood,
         note: entry.note ?? "",
         tags: parseList(entry.tags),
-        date: entry.date.slice(0, 10),
+        date: typeof entry.date === "string" ? entry.date.slice(0, 10) : entry.date,
         createdAt: entry.createdAt,
         sleepHours: entry.sleepHours ?? null,
         exerciseMinutes: entry.exerciseMinutes ?? null,
@@ -402,19 +439,15 @@ const [showBackupSettings, setShowBackupSettings] = useState(false);
         completedActivities: parseList(entry.completedActivities),
       }));
       
-      const activityMap: Record<string, string[]> = {};
-      normalized.forEach((entry) => {
-        if (entry.completedActivities && entry.completedActivities.length > 0) {
-          activityMap[entry.date] = entry.completedActivities;
-        }
-      });
-      setCompletedActivityEntries(activityMap);
       setEntries(normalized);
-      setTimeout(() => setLoading(false), 0);
     };
 
     fetchEntries();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, loading]);
 
   useEffect(() => {
     const fetchCommunityMood = async () => {
@@ -813,7 +846,7 @@ const filteredEntries = useMemo(() => {
     const blob = new Blob([content], { type: "text/html;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const today = new Date().toISOString().slice(0, 10);
+    const today = toDayKey(new Date());
     link.href = url;
     link.download = `mood-report-${today}.html`;
     link.click();
@@ -840,7 +873,7 @@ const filteredEntries = useMemo(() => {
       const blob = new Blob([JSON.stringify(data.backup, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toDayKey(new Date());
       link.href = url;
       link.download = `mood-backup-${today}.json`;
       link.click();
@@ -848,7 +881,7 @@ const filteredEntries = useMemo(() => {
       
       setFeedback({ type: "success", text: "Backup exported successfully!" });
       setTimeout(() => setFeedback(null), 3000);
-    } catch (error) {
+    } catch {
       setFeedback({ type: "error", text: "Failed to export backup" });
       setTimeout(() => setFeedback(null), 3000);
     }
@@ -864,7 +897,6 @@ const filteredEntries = useMemo(() => {
         const data = JSON.parse(e.target?.result as string);
         if (data.entries && Array.isArray(data.entries)) {
           setImportPreview({ entries: data.entries });
-          setImportFile(file);
         } else {
           setFeedback({ type: "error", text: "Invalid backup file format" });
           setTimeout(() => setFeedback(null), 3000);
@@ -901,7 +933,6 @@ const filteredEntries = useMemo(() => {
 
       const data = await response.json();
       
-      setImportFile(null);
       setImportPreview(null);
       setShowBackupSettings(false);
       
@@ -926,54 +957,47 @@ const filteredEntries = useMemo(() => {
         }));
         setEntries(normalized);
       }
-    } catch (error) {
+    } catch {
       setFeedback({ type: "error", text: "Failed to import backup" });
       setTimeout(() => setFeedback(null), 3000);
     }
   };
 
   const cancelImport = () => {
-    setImportFile(null);
     setImportPreview(null);
   };
 
   const entriesThisWeek = useMemo(() => {
-    const now = new Date();
+    const today = startOfToday().getTime();
     return entries.filter((entry) => {
-      const entryDate = new Date(entry.date);
-      const diff = Number(now) - Number(entryDate);
-      return diff <= 6 * 24 * 60 * 60 * 1000 && diff >= 0;
+      const entryDate = startOfDay(parseDayKey(entry.date)).getTime();
+      const diff = diffInDays(today, entryDate);
+      return diff >= 0 && diff <= 6;
     }).length;
   }, [entries]);
 
   const streak = useMemo(() => {
     if (entries.length === 0) return 0;
-    const sortedDates = [...entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    let count = 0;
-    let currentDate = new Date(today);
-    for (let i = 0; i < sortedDates.length; i++) {
-      const entryDate = new Date(sortedDates[i].date);
-      entryDate.setHours(0, 0, 0, 0);
-      const diff = Math.floor((currentDate.getTime() - entryDate.getTime()) / (24 * 60 * 60 * 1000));
-      if (diff === 0 || (i === 0 && diff === 1)) {
-        count++;
-        currentDate = entryDate;
-      } else {
-        break;
-      }
+
+    // Unique local-midnight timestamps, newest first.
+    const days = Array.from(
+      new Set(entries.map((entry) => startOfDay(parseDayKey(entry.date)).getTime()))
+    ).sort((a, b) => b - a);
+
+    const today = startOfToday().getTime();
+
+    // A live streak either includes today or ended yesterday.
+    const gapToToday = diffInDays(today, days[0]);
+    if (gapToToday !== 0 && gapToToday !== 1) return 0;
+
+    let count = 1;
+    for (let i = 1; i < days.length; i++) {
+      if (diffInDays(days[i - 1], days[i]) !== 1) break;
+      count += 1;
     }
+
     return count;
   }, [entries]);
-
-  const moodScore: Record<MoodId, number> = {
-    ecstatic: 5,
-    good: 4,
-    neutral: 3,
-    low: 2,
-    stressed: 1,
-  };
 
   const averageScore = useMemo(() => {
     if (entries.length === 0) return 0;
@@ -995,7 +1019,7 @@ const filteredEntries = useMemo(() => {
       d.setDate(d.getDate() - i);
       d.setHours(0, 0, 0, 0);
       const entry = entries.find((e) => {
-        const entryDate = new Date(e.date);
+        const entryDate = parseDayKey(e.date);
         entryDate.setHours(0, 0, 0, 0);
         return entryDate.getTime() === d.getTime();
       });
@@ -1011,7 +1035,7 @@ const filteredEntries = useMemo(() => {
       d.setDate(d.getDate() - i);
       d.setHours(0, 0, 0, 0);
       const entry = entries.find((e) => {
-        const entryDate = new Date(e.date);
+        const entryDate = parseDayKey(e.date);
         entryDate.setHours(0, 0, 0, 0);
         return entryDate.getTime() === d.getTime();
       });
@@ -1024,7 +1048,7 @@ const filteredEntries = useMemo(() => {
     const weeks = getWeeksInRange(8);
     return weeks.map(({ week, year }) => {
       const weekEntries = entries.filter((e) => {
-        const entryDate = new Date(e.date);
+        const entryDate = parseDayKey(e.date);
         return getWeekNumber(entryDate) === week && entryDate.getFullYear() === year;
       });
       const avg = weekEntries.length > 0
@@ -1054,7 +1078,7 @@ const filteredEntries = useMemo(() => {
       d.setDate(d.getDate() - i);
       d.setHours(0, 0, 0, 0);
       const entry = entries.find((e) => {
-        const entryDate = new Date(e.date);
+        const entryDate = parseDayKey(e.date);
         entryDate.setHours(0, 0, 0, 0);
         return entryDate.getTime() === d.getTime();
       });
@@ -1074,7 +1098,7 @@ const filteredEntries = useMemo(() => {
     
     const targetEntries = dateFilter === "all" ? entries : filteredEntries;
     targetEntries.forEach((entry) => {
-      const dayIndex = new Date(entry.date).getDay();
+      const dayIndex = parseDayKey(entry.date).getDay();
       dayStats[dayIndex].moods[entry.mood]++;
       dayStats[dayIndex].count++;
     });
@@ -1172,7 +1196,7 @@ const filteredEntries = useMemo(() => {
     });
     
     const results = Object.entries(activityStats)
-      .filter(([_, stats]) => stats.count >= 1)
+      .filter(([, stats]) => stats.count >= 1)
       .map(([id, stats]) => {
         const activity = SELF_CARE_ACTIVITIES.find(a => a.id === id);
         return {
@@ -1191,7 +1215,7 @@ const filteredEntries = useMemo(() => {
   const activityStreak = useMemo(() => {
     if (entries.length === 0) return 0;
     let streak = 0;
-    const sortedDates = [...entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const sortedDates = [...entries].sort((a, b) => parseDayKey(b.date).getTime() - parseDayKey(a.date).getTime());
     for (const entry of sortedDates) {
       if (entry.exerciseMinutes && entry.exerciseMinutes > 0) {
         streak++;
@@ -1216,7 +1240,15 @@ const filteredEntries = useMemo(() => {
 
   const lastMood = entries[0];
 
-  if (!loading && !user) {
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+        <p className="text-xs uppercase tracking-[0.35em]">Checking session…</p>
+      </div>
+    );
+  }
+
+  if (!user) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-indigo-950 via-slate-950 to-slate-950 text-slate-100">
         <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col items-center justify-center gap-6 px-6 text-center">
@@ -1819,12 +1851,12 @@ const filteredEntries = useMemo(() => {
                   <p className="text-sm text-slate-300">
                     {(() => {
                       const thisMonthEntries = entries.filter(e => {
-                        const entryDate = new Date(e.date);
+                        const entryDate = parseDayKey(e.date);
                         const now = new Date();
                         return entryDate.getMonth() === now.getMonth() && entryDate.getFullYear() === now.getFullYear();
                       });
                       const lastMonthEntries = entries.filter(e => {
-                        const entryDate = new Date(e.date);
+                        const entryDate = parseDayKey(e.date);
                         const now = new Date();
                         const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
                         return entryDate.getMonth() === lastMonth.getMonth() && entryDate.getFullYear() === lastMonth.getFullYear();
@@ -1902,7 +1934,7 @@ const filteredEntries = useMemo(() => {
                     </div>
                     <p className="text-xs text-slate-400 mb-3">Based on your logged activities, ranked by mood improvement:</p>
                     <div className="space-y-2">
-                      {selfCareActivityEffectiveness.slice(0, 5).map((activity, idx) => (
+                      {selfCareActivityEffectiveness.slice(0, 5).map((activity) => (
                         <div key={activity.id} className="flex items-center justify-between rounded-lg bg-slate-800/50 px-3 py-2">
                           <div className="flex items-center gap-2">
                             <span className="text-lg">{activity.emoji}</span>
@@ -2031,7 +2063,7 @@ const filteredEntries = useMemo(() => {
                     <div className="mt-4 flex items-center justify-center">
                       <div className="relative h-32 w-32">
                         <svg viewBox="0 0 36 36" className="h-32 w-32 rotate-[-90deg]">
-                          {donutChartData.reduce((acc, slice, idx) => {
+                          {donutChartData.reduce((acc, slice) => {
                             if (slice.value === 0) return acc;
                             const offset = acc.offset;
                             const dashArray = (slice.percentage * 0.7854) + " " + (100 - slice.percentage * 0.7854);

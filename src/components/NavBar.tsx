@@ -2,44 +2,38 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { AUTH_EVENT_NAME, clearAuthUser, getAuthUser } from "@/lib/auth-storage";
+import { emitAuthChange } from "@/lib/session-client";
+import { useCurrentUser } from "@/lib/use-current-user";
 
-type Props = {
-  onSignOut?: () => void;
-};
-
-export function NavBar({ onSignOut }: Props) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+export function NavBar() {
+  const { user, loading } = useCurrentUser();
   const router = useRouter();
-
-  useEffect(() => {
-    const syncAuthState = () => setIsAuthenticated(!!getAuthUser());
-    syncAuthState();
-
-    const handler = () => syncAuthState();
-    window.addEventListener(AUTH_EVENT_NAME, handler);
-    return () => window.removeEventListener(AUTH_EVENT_NAME, handler);
-  }, []);
 
   const handleSignOut = async () => {
     try {
       await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
     } catch {
-      // ignore logout errors, still clear local state
+      // Ignore logout errors — the local UI state is cleared regardless.
     }
-    clearAuthUser();
-    setIsAuthenticated(false);
-    onSignOut?.();
+
+    emitAuthChange();
     router.push("/login");
+    router.refresh();
   };
+
+  if (loading) {
+    return <nav className="flex flex-wrap items-center gap-3 text-sm text-slate-400" />;
+  }
 
   return (
     <nav className="flex flex-wrap items-center gap-3 text-sm text-slate-300">
-      {isAuthenticated ? (
+      {user ? (
         <>
           <Link className="hover:text-white" href="/">
             Home
+          </Link>
+          <Link className="hover:text-white" href="/admin">
+            Admin
           </Link>
           <button
             onClick={handleSignOut}

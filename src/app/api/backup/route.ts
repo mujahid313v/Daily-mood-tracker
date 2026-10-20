@@ -1,25 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
+import { notFound, unauthorized } from "@/lib/http";
+import { parseList } from "@/lib/parse";
 
-function parseList(value: unknown): string[] {
-  if (Array.isArray(value)) return value;
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed;
-    } catch {
-      // fall through
-    }
-    return value.split(",").map((s) => s.trim()).filter(Boolean);
-  }
-  return [];
-}
-
+/** Exports every entry owned by the session user as a portable JSON document. */
 export async function GET(request: Request) {
   const session = await getSessionUser(request);
   if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthorized();
   }
 
   const userId = session.userId;
@@ -31,21 +20,13 @@ export async function GET(request: Request) {
     });
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return notFound("User not found");
     }
 
     const entries = await prisma.moodEntry.findMany({
       where: { userId },
       orderBy: { date: "desc" },
     });
-
-    const settings = {
-      theme: "dark",
-      reminderEnabled: false,
-      reminderTime: "20:00",
-      reminderDays: ["mon", "tue", "wed", "thu", "fri"],
-      customTags: [],
-    };
 
     const backup = {
       version: "1.0",
@@ -55,7 +36,6 @@ export async function GET(request: Request) {
         email: user.email,
         name: user.name,
       },
-      settings,
       entries: entries.map((entry) => ({
         id: entry.id,
         mood: entry.mood,
@@ -72,11 +52,8 @@ export async function GET(request: Request) {
     };
 
     return NextResponse.json({ backup });
-  } catch (error) {
-    console.error("Failed to create backup", error);
-    return NextResponse.json(
-      { error: "Failed to create backup" },
-      { status: 500 }
-    );
+  } catch {
+    console.error("Failed to create backup");
+    return NextResponse.json({ error: "Failed to create backup" }, { status: 500 });
   }
 }

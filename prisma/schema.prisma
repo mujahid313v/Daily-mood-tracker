@@ -39,4 +39,8 @@ model CommunityMood {
   id        String   @id @default(cuid())
   mood      String
   date      DateTime @default(now())
+
+  // The community board is queried by date range on every page load and grows
+  // without bound, so the range scan needs an index.
+  @@index([date])
 }
